@@ -1,0 +1,12 @@
+INTENDED USE: the {{ panel_name }} of the jersey as one full-bleed print block, {{ print_size[0] }} x {{ print_size[1] }} in.
+
+INPUT: Image 1 is the reference{% if has_front_reference %}; Image 2 is the finished {{ anchor_name }} to match{% endif %}.
+
+{% include "_ignore.j2" %}
+TASK: draw only the {{ panel_name }}, filling the whole canvas edge to edge.
+{% include "_removals.j2" %}
+{% include "_notes.j2" %}
+FINAL CHECK: one flat, full-bleed {{ panel_name }}.
+
+IMAGE GENERATION PROMPT
+{{ descriptor }}

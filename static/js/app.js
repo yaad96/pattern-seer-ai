@@ -1,0 +1,182 @@
+/**
+ * Entry point: loads GET /api/config, renders the provider status and the demo banner, wires the
+ * three tabs (Recreate / Design / History) and routes pasted or dropped images to the active tab.
+ */
+import './i18n.js';
+import { loadConfig } from './api.js';
+import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
+import { initDesign } from './design.js';
+import { initHistory } from './history.js';
+import { initRecreate } from './recreate.js';
+import { callout } from './ui.js';
+
+const TABS = ['recreate', 'design', 'history'];
+// /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
+// Design, without the History tab, the model status, the output settings, costs or prompts.
+// /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
+const MODE = document.documentElement.dataset.app || 'studio';
+const CUSTOMER = MODE === 'customer' || MODE === 'experiment';
+
+function isDemo(config) {
+  return config.providers.length === 1 && config.providers[0].name === 'mock';
+}
+
+function renderStatus(config) {
+  const demo = isDemo(config);
+  const provider = config.providers.find((p) => p.name === config.default_provider) || config.providers[0];
+  const writer = config.brief_writer_enabled
+    ? (config.brief_writers || []).find((w) => w.name === config.default_brief_writer)
+    : null;
+  const label = demo ? 'Demo mode (no AI)' : `${provider.label}${writer ? ` · AI designer: ${writer.label}` : ''}`;
+  const details = [
+    `Image AI: ${config.providers.map((p) => `${p.label} (${p.default_model})`).join(', ')}`,
+    `AI designer: ${writer ? `${writer.label} (${writer.model})` : 'off'}`,
+    `Print resolution: ${config.print_dpi} dpi`,
+    `Version ${config.app.version}`,
+  ].join('\n');
+  replace(document.getElementById('provider-status'),
+    h('span', { class: ['status-pill', demo && 'is-demo'], title: details },
+      h('span', { class: 'status-dot', 'aria-hidden': 'true' }), h('span', null, label)));
+}
+
+function renderBanner(config) {
+  if (!isDemo(config)) return;
+  document.getElementById('banner-slot').appendChild(h('div', { class: 'banner', role: 'note' },
+    h('div', { class: 'banner-inner' }, icon('alert'),
+      h('p', null, h('strong', null, 'Demo mode — images are placeholders, not AI.'),
+        ' No OpenAI API key found. Paste your OpenAI key into the ', h('code', null, '.openai_api_key'),
+        ' file in the project folder and restart the app. (Claude cannot create images; a Claude key only powers the AI designer.)'))));
+}
+
+function renderCustomerBanner(config) {
+  if (!isDemo(config)) return;
+  document.getElementById('banner-slot').appendChild(h('div', { class: 'banner', role: 'note' },
+    h('div', { class: 'banner-inner' }, icon('alert'), h('p', null, h('strong', null, 'Demo mode: these images are placeholders, not AI.')))));
+}
+
+function initTabs(onShow, names = TABS) {
+  const tabs = names.map((name) => document.getElementById(`tab-${name}`));
+  const panels = names.map((name) => document.getElementById(`panel-${name}`));
+  const tabKey = CUSTOMER ? `${MODE}.tab` : 'tab';
+  let current = null;
+
+  function select(name, focus) {
+    const index = Math.max(0, names.indexOf(name));
+    current = names[index];
+    tabs.forEach((tab, i) => {
+      const on = i === index;
+      tab.setAttribute('aria-selected', String(on));
+      tab.tabIndex = on ? 0 : -1;
+      panels[i].hidden = !on;
+    });
+    if (focus) tabs[index].focus();
+    if (window.location.hash !== `#${current}`) window.history.replaceState(null, '', `#${current}`);
+    storage.set(tabKey, current);
+    onShow(current);
+  }
+
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => select(names[i], false));
+    tab.addEventListener('keydown', (e) => {
+      const target = { ArrowRight: i + 1, ArrowLeft: i - 1 + names.length, Home: 0, End: names.length - 1 }[e.key];
+      if (target === undefined) return;
+      e.preventDefault();
+      select(names[target % names.length], true);
+    });
+  });
+  window.addEventListener('hashchange', () => select(window.location.hash.slice(1), false));
+  const fromHash = window.location.hash.slice(1);
+  select(names.includes(fromHash) ? fromHash : storage.get(tabKey, 'recreate'), false);
+  return { current: () => current, select };
+}
+
+function wireGlobalInput(tabs, recreate, design) {
+  document.addEventListener('paste', (e) => {
+    if (document.querySelector('dialog[open]')) return;
+    const files = imageFilesFrom(e.clipboardData);
+    if (!files.length) return;
+    if (tabs.current() === 'recreate') {
+      e.preventDefault();
+      recreate.acceptFile(files[0]);
+    } else if (tabs.current() === 'design') {
+      e.preventDefault();
+      design.addAttachments(files);
+    }
+  });
+  // Dropping a file outside a drop target must not navigate away from the app.
+  window.addEventListener('dragover', (e) => {
+    if (hasFiles(e) && !e.defaultPrevented) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+    }
+  });
+  window.addEventListener('drop', (e) => {
+    if (hasFiles(e)) e.preventDefault();
+  });
+}
+
+function renderBootError(bootEl, message) {
+  const retry = h('button', { type: 'button', class: 'btn btn-primary' }, icon('refresh'), 'Try again');
+  retry.addEventListener('click', () => {
+    replace(bootEl, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Loading Jersey HD Studio…');
+    boot();
+  });
+  replace(bootEl, h('div', { class: 'empty' },
+    h('div', { class: 'empty-icon' }, icon('alert')),
+    h('p', { class: 'empty-title' }, 'Jersey HD Studio could not start'),
+    h('p', { class: 'empty-text' }, message),
+    retry));
+}
+
+async function boot() {
+  const bootEl = document.getElementById('boot');
+  let config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    renderBootError(bootEl, err.message);
+    return;
+  }
+  if (CUSTOMER) {
+    try {
+      renderCustomerBanner(config);
+      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: MODE });
+      const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: MODE });
+      const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab
+      wireGlobalInput(tabs, recreate, design);
+      bootEl.remove();
+    } catch (err) {
+      replace(bootEl, callout('error', `Something went wrong while starting the app: ${err.message}`));
+      throw err;
+    }
+    return;
+  }
+  try {
+    renderStatus(config);
+    renderBanner(config);
+    if (config.login_enabled) {
+      document.getElementById('provider-status').after(h('a', { class: 'btn btn-sm btn-ghost', href: '/logout' }, 'Log out'));
+    }
+    const recreate = initRecreate(document.getElementById('panel-recreate'));
+    const design = initDesign(document.getElementById('panel-design'));
+    let tabs = null;
+    const historyTab = initHistory(document.getElementById('panel-history'), {
+      onContinue: (job) => {
+        tabs.select('design', false);
+        design.continueFrom(job);
+      },
+      onDeleted: (jobId) => {
+        design.removeJob(jobId);
+        recreate.forgetJob(jobId);
+      },
+    });
+    tabs = initTabs((name) => { if (name === 'history') historyTab.activate(); });
+    wireGlobalInput(tabs, recreate, design);
+    bootEl.remove();
+  } catch (err) {
+    replace(bootEl, callout('error', `Something went wrong while starting the app: ${err.message}`));
+    throw err;
+  }
+}
+
+boot();

@@ -1,0 +1,13 @@
+# Jersey HD Studio - runtime dependencies (Python 3.11+; developed on 3.13)
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.2
+pydantic-settings==2.16.2
+Jinja2==3.1.6
+pillow==13.0.0
+numpy==2.5.4
+vtracer==0.6.15
+svgelements==1.9.6
+openai==3.41.0
+anthropic==2.3.0

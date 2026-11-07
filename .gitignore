@@ -1,0 +1,32 @@
+# API keys - never commit these
+.anthropic_api_key
+.openai_api_key
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated images, vectors and job records
+outputs/
+
+# The old history backups (the backup feature was removed on 2026-11-03; the folder is kept)
+backups/
+
+# Private working files, kept out of the public repository:
+# the owner's operating guide (server, costs, partner), the session hand-off notes, the deploy script (server
+# address), the factory samples and stray exports (client designs), and the example thumbnails (made from client
+# references)
+OWNER_GUIDE.md
+CLAUDE.md
+context.md
+deploy.sh
+*.zip
+/jersey-*.eps
+static/examples/*.webp
+.DS_Store
+
+# The production prompt set: its own private repository (pattern-seer-prompts)
+prompts-private/

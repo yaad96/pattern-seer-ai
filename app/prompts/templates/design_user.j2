@@ -1,0 +1,11 @@
+TASK: design a {{ sport }} jersey.
+
+{% include "_spec.j2" %}
+<client_request>
+{{ message }}
+</client_request>
+
+{% include "_lettering.j2" %}
+{% include "_output.j2" %}
+IMAGE GENERATION PROMPT
+{{ descriptor }}

@@ -1,0 +1,4 @@
+{% if lettering_allowed and lettering %}LETTERING:
+{% for item in lettering %}- {{ item }}
+{% endfor %}{% else %}LETTERING: none.
+{% endif %}

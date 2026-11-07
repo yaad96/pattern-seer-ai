@@ -1,0 +1,10 @@
+Sport: {{ sport }}. View: {{ view_phrase }}. Style: {{ style_label }}.
+{% if colors %}Fixed colours: {{ colors | join(', ') }}.
+{% endif %}{% if previous_brief %}
+<previous_brief>
+{{ previous_brief }}
+</previous_brief>
+{% endif %}
+<client_request>
+{{ message }}
+</client_request>

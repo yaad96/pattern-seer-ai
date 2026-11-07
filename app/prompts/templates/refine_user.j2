@@ -1,0 +1,11 @@
+TASK: edit Image 1. Change only:
+{% for change in changes %}- {{ change }}
+{% endfor %}
+<client_request>
+{{ message }}
+</client_request>
+
+Keep everything else the same.
+{% include "_output.j2" %}
+IMAGE GENERATION PROMPT
+{{ descriptor }}

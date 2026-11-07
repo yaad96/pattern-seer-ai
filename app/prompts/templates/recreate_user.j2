@@ -1,0 +1,10 @@
+TASK: recreate the reference jersey as {{ mode | replace('_', ' ') }} artwork{% if seamless %} that tiles seamlessly{% endif %}.
+
+{% include "_ignore.j2" %}
+{% include "_removals.j2" %}
+Background: {{ background }}.
+{% include "_notes.j2" %}
+FINAL CHECK: only the requested artwork, flat and clean.
+
+IMAGE GENERATION PROMPT
+{{ descriptor }}
