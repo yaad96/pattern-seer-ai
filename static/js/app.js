@@ -14,8 +14,12 @@ const TABS = ['recreate', 'design', 'history'];
 // /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
 // Design, without the History tab, the model status, the output settings, costs or prompts.
 // /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
+// /panels (studio login only, 2026-11-07): the studio's production panels, which the studio page links to. It is the
+// /customerep flow with the studio's details (output settings, View prompt, costs, image details), the back mirrored
+// or copied, and the full Design tab; no History tab; its own saved state; a link back to the studio page.
 const MODE = document.documentElement.dataset.app || 'studio';
 const CUSTOMER = MODE === 'customer' || MODE === 'experiment';
+const PANELS_PAGE = MODE === 'panels';
 
 function isDemo(config) {
   return config.providers.length === 1 && config.providers[0].name === 'mock';
@@ -57,7 +61,7 @@ function renderCustomerBanner(config) {
 function initTabs(onShow, names = TABS) {
   const tabs = names.map((name) => document.getElementById(`tab-${name}`));
   const panels = names.map((name) => document.getElementById(`panel-${name}`));
-  const tabKey = CUSTOMER ? `${MODE}.tab` : 'tab';
+  const tabKey = CUSTOMER || PANELS_PAGE ? `${MODE}.tab` : 'tab';
   let current = null;
 
   function select(name, focus) {
@@ -143,6 +147,23 @@ async function boot() {
       const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: MODE });
       const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: MODE });
       const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab
+      wireGlobalInput(tabs, recreate, design);
+      bootEl.remove();
+    } catch (err) {
+      replace(bootEl, callout('error', `Something went wrong while starting the app: ${err.message}`));
+      throw err;
+    }
+    return;
+  }
+  if (PANELS_PAGE) {
+    try {
+      renderStatus(config);
+      renderBanner(config);
+      document.getElementById('provider-status').after(
+        h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the studio page' }, icon('arrow-left'), 'Main page'));
+      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, staff: true, keyPrefix: MODE });
+      const design = initDesign(document.getElementById('panel-design'), { keyPrefix: MODE });
+      const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab (it is on the studio page)
       wireGlobalInput(tabs, recreate, design);
       bootEl.remove();
     } catch (err) {

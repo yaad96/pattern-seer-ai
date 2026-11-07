@@ -10,7 +10,9 @@ import {
 import { createProgress, isActive, statusBadge, watchJob } from './jobs.js';
 import { createResults, customerError, customerWarnings, jobCostText, withoutModel } from './results.js';
 import { createOutputSettings, openPromptPreview, pickKnown } from './settings.js';
-import { announce, callout, checkboxEl, choiceCards, field, segmented, setBusy, switchEl, toast, toggleGroup } from './ui.js';
+import {
+  announce, callout, checkboxEl, choiceCards, choiceExample, field, segmented, setBusy, switchEl, toast, toggleGroup,
+} from './ui.js';
 
 const PANELS = [['front', 'Front'], ['back', 'Back'], ['sleeve', 'Sleeve']];
 const JOB_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{6}$/;
@@ -256,20 +258,26 @@ function stepCard(step, title, children) {
     h('div', { class: 'card-body' }, children));
 }
 
-/** customer: the /customerep page for showing clients a demo: production panels only, with a choice of which
- * panels to make, and no output settings, prompt, model names or costs. */
-export function initRecreate(root, { customer = false, keyPrefix = 'customer' } = {}) {
+/** customer: production panels only, with a choice of which panels to make and one picture per panel (the
+ * /customerep flow). Without staff (/customerep for showing clients a demo, /experiment) there are no output
+ * settings, prompt, model names, costs or image details. staff: /panels, the studio's panel page (2026-11-07): the
+ * same flow plus everything the studio page shows (output settings, View prompt, costs, image details) and the back
+ * as the front mirrored or copied. The studio page itself no longer makes panels: it links to /panels when the server
+ * serves that page (config.panels_page), and builds its panel row hidden. */
+export function initRecreate(root, { customer = false, staff = false, keyPrefix = 'customer' } = {}) {
   const config = getConfig();
   const defaults = config.defaults.recreate;
   const maxMb = config.limits.max_upload_mb;
   const LAST_JOB_KEY = customer ? `${keyPrefix}.lastJob` : 'recreate.lastJob';
+  const forClient = customer && !staff; // hide the studio's details (models, costs, prompts, sizes, badges)
   let busy = false;
   let current = null;
 
   /* ---------- 1. reference image(s) ---------- */
-  // "Is the back different?" decides the inputs: one picture with a blue crop box for the front (panels then make
-  // the back from the front), or a front picture and a back picture, each with its own box (blue front, orange
-  // back). Other output types use the front only.
+  // The studio page: one picture with a blue crop box (pattern, flat jersey and HD replica use only that).
+  // "Is the back different?" (sides) and the separate back picture (backPart) belonged to the studio page's panels:
+  // a front and a back picture, each with its own box. Since 2026-11-07 no page shows them (panels moved to /panels,
+  // which like /customerep has one picture per panel); the code is kept, not deleted, as with the Clean-up card.
   const sides = segmented({
     legend: 'Is the back design different from the front? (apart from name and number)',
     options: [{ value: 'same', label: 'No, the same' }, { value: 'different', label: 'Yes, different' }],
@@ -304,7 +312,7 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     legend: 'Back',
     options: [{ value: 'mirror', label: 'Mirror of the front' }, { value: 'copy', label: 'Copy of the front' }],
     value: defaults.back === 'copy' ? 'copy' : 'mirror',
-    hint: customer ? 'The back is made from the front. Name and number are left off.'
+    hint: forClient ? 'The back is made from the front. Name and number are left off.'
       : 'The back is made from the front, so it costs no extra AI image. Name and number are left off.',
   });
   const frontOnlyHint = h('p', { class: 'hint' }, 'Only the front picture is used for this output type.');
@@ -312,19 +320,22 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     h('div', { class: 'field-label' }, 'Back picture'), back.el, backTools.el, frontOnlyHint,
     callout('info', 'If one picture shows both sides, add it to both slots: box the front in the first and the back in the second.'));
 
-  /** The panels to make (the customer page lets the client choose; the studio page always makes all three). */
+  /** The panels to make (chosen in the panel row; all three on a server too old to know the choice). */
   const chosen = () => (panelPick ? panelPick.values : PANELS.map(([value]) => value));
-  /** "Is the back different?" only matters when both the front and the back are made (or for other output types). */
+  /** "Is the back different?" would matter only for the studio page's panels with both the front and the back. The
+   * studio page no longer makes panels (2026-11-07), and the customer flow (/customerep, /panels) never puts this
+   * question on the page, so it is never asked now. Pattern, flat jersey and HD replica use the front picture only. */
   function sidesAsked() {
     const sel = chosen();
-    return mode.value !== 'panels' || (sel.includes('front') && sel.includes('back'));
+    return mode.value === 'panels' && sel.includes('front') && sel.includes('back');
   }
   const differentBack = () => sidesAsked() && sides.value === 'different';
 
   /* The customer page: one picture slot per chosen panel, each with its own box (blue front, orange back, green
-     sleeve). With the front chosen, the back can be the front mirrored instead; a later slot can reuse the picture
-     above it. The first chosen panel's picture is sent as the reference (`image`, front_crop), a back of its own as
-     back_image, and a sleeve made with other panels as sleeve_image (sleeve_crop). */
+     sleeve). With the front chosen, the back can be made from the front instead (mirrored; on /panels mirrored or
+     copied); a later slot can reuse the picture above it. The first chosen panel's picture is sent as the reference
+     (`image`, front_crop), a back of its own as back_image, and a sleeve made with other panels as sleeve_image
+     (sleeve_crop). */
   const cust = customer ? (() => {
     const sleeveCrop = createCrop('sleeve');
     const sleeve = createUploadSlot({
@@ -354,12 +365,14 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     return {
       sleeve, sleeveCrop, sleeveTools, backSource, backReuse, sleeveReuse, backSameHint, backUpload,
       partFront: h('div', { class: 'upload-part' }, h('div', { class: 'field-label' }, 'Front picture'), front.el, cropTools),
-      partBack: h('div', { class: 'upload-part' }, h('div', { class: 'field-label' }, 'Back picture'), backSource.el, backSameHint, backUpload),
+      // /panels: "Front and back the same" then asks mirror or copy (the switch's own hint replaces backSameHint)
+      partBack: h('div', { class: 'upload-part' }, h('div', { class: 'field-label' }, 'Back picture'), backSource.el, backSameHint,
+        staff ? backMethod.el : null, backUpload),
       partSleeve: h('div', { class: 'upload-part' }, h('div', { class: 'field-label' }, 'Sleeve picture'), sleeveReuse.el, sleeve.el, sleeveTools.el),
     };
   })() : null;
 
-  /** The customer page: the back is the front mirrored ("Front and back the same"), with no picture of its own. */
+  /** The customer page: the back is made from the front ("Front and back the same"), with no picture of its own. */
   const backFromFront = () => {
     const sel = chosen();
     return sel.includes('front') && sel.includes('back') && cust.backSource.value === 'same';
@@ -385,7 +398,8 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     cust.partBack.hidden = !sel.includes('back');
     cust.partSleeve.hidden = !sel.includes('sleeve');
     cust.backSource.el.hidden = !sel.includes('front'); // without the front, the back needs its own picture
-    cust.backSameHint.hidden = !backFromFront();
+    cust.backSameHint.hidden = staff || !backFromFront();
+    if (staff) backMethod.el.hidden = !backFromFront(); // mirror or copy, once the back is made from the front
     cust.backUpload.hidden = backFromFront();
     cust.backReuse.el.hidden = first === back;
     cust.sleeveReuse.el.hidden = first === cust.sleeve;
@@ -467,10 +481,24 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
   // owner's wording, 2026-11-04)
   const customerModes = modes.filter((m) => m.value === 'panels')
     .map((m) => ({ ...m, description: '৩টি প্রিন্ট-রেডি প্যানেল: ফ্রন্ট, ব্যাক ও স্লিভ।', note: PICK_HINT }));
+  // The studio page has no Production panels card since 2026-11-07 (the owner's choice): in its place a link to
+  // /panels, the same flow as /customerep with the studio's details. The link shows only when the server serves that
+  // page (config.panels_page; JERSEY_PANELS_PAGE=false turns both off).
+  const studioModes = modes.filter((m) => m.value !== 'panels');
   const mode = choiceCards({
-    legend: 'Output type', options: customer ? customerModes : modes,
-    value: customer ? 'panels' : defaults.mode, onChange: syncMode,
+    legend: 'Output type', options: customer ? customerModes : studioModes,
+    value: customer ? 'panels' : studioModes.some((m) => m.value === defaults.mode) ? defaults.mode : studioModes[0].value,
+    onChange: syncMode,
   });
+  if (!customer && config.panels_page === true) {
+    const panelsMode = modes.find((m) => m.value === 'panels');
+    // #recreate: open on the panel flow, not on whichever /panels tab was used last (its Design tab)
+    mode.el.querySelector('.choices').appendChild(h('a', { class: 'choice choice-link', href: '/panels#recreate' },
+      h('span', { class: 'choice-box' },
+        h('span', { class: 'choice-title' }, 'Generate production-ready panels'),
+        h('span', { class: 'choice-desc' }, 'Front, back and sleeve, on their own page: choose the panels, then add a picture for each.'),
+        panelsMode && panelsMode.example ? choiceExample(panelsMode.example) : null)));
+  }
   // Production panels: which of the three to make (any combination; at least one). A server older than this page
   // ignores the choice, so the row only shows when the server knows it (its defaults have `panels`).
   const panelPick = Array.isArray(defaults.panels) ? toggleGroup({
@@ -596,7 +624,8 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
       const slots = customerSlots();
       const own = sel.includes('front') && sel.includes('back') && !backFromFront();
       values.front_crop = slots.length ? slots[0][2].value() : null;
-      values.back = own ? 'image' : 'mirror';
+      // made from the front: mirrored (/customerep), or mirrored or copied as chosen (/panels)
+      values.back = own ? 'image' : staff && backFromFront() ? backMethod.value : 'mirror';
       values.back_crop = own ? backCrop.value() : null;
       values.sleeve_crop = sel.includes('sleeve') && sel.length > 1 ? cust.sleeveCrop.value() : null;
       values.reference_check = false; // every panel comes from the client's own box; the labels are hidden here
@@ -605,7 +634,7 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
   }
 
   /* ---------- actions ---------- */
-  const promptBtn = h('button', { type: 'button', class: 'btn', onClick: showPrompt, hidden: customer }, icon('eye'), 'View prompt');
+  const promptBtn = h('button', { type: 'button', class: 'btn', onClick: showPrompt, hidden: forClient }, icon('eye'), 'View prompt');
   const generateLabel = h('span', null, 'Generate');
   const generateBtn = h('button', { type: 'button', class: 'btn btn-primary btn-lg', onClick: generate }, icon('sparkles'), generateLabel);
   const readyHint = h('p', { class: 'hint', 'aria-live': 'polite' });
@@ -632,6 +661,10 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
   }
 
   function showPrompt() {
+    if (mode.value === 'panels' && !chosen().length) { // the server would answer with a raw validation error
+      toast('Choose at least one panel.', { kind: 'warning' });
+      return;
+    }
     const size = front.state.size;
     const box = crop.box();
     const ratio = size ? (size.width * (box.r - box.l)) / (size.height * (box.b - box.t)) : null;
@@ -639,7 +672,8 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
       tabs: [{
         kind: 'recreate',
         label: 'Image prompt',
-        note: ratio ? null : 'Upload the reference image to see the exact aspect ratio that will be used.',
+        // panels have fixed ratios (front and back 25:34, sleeve 12:7), whatever the picture
+        note: ratio || mode.value === 'panels' ? null : 'Upload the reference image to see the exact aspect ratio that will be used.',
       }],
       buildRequest: (kind) => ({ kind, options: currentOptions(), message: '', inputRatio: ratio }),
     });
@@ -721,7 +755,7 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     stopCurrent();
     const view = {
       jobId, fresh, sig: '', results: null, unwatch: null,
-      progress: createProgress({ stageText: customer ? withoutModel : null }),
+      progress: createProgress({ stageText: forClient ? withoutModel : null }),
       badge: h('span'),
       time: h('span', { class: 'muted' }),
       cost: h('span', { class: 'muted' }),
@@ -747,7 +781,7 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     if (view.unwatch) view.unwatch();
     view.fresh = false; // the card itself says how it ended
     view.progress.stop();
-    view.progress = createProgress({ since: Date.now(), stageText: customer ? withoutModel : null });
+    view.progress = createProgress({ since: Date.now(), stageText: forClient ? withoutModel : null });
     replace(view.progressSlot, view.progress.el);
     view.unwatch = watchJob(job.id, (next, meta) => onUpdate(view, next, meta));
   }
@@ -769,20 +803,20 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
     replace(view.badge, statusBadge(job.status));
     view.time.textContent = fmtRelative(job.created_at);
     view.time.title = fmtDateTime(job.created_at);
-    view.cost.textContent = customer ? '' : jobCostText(job);
+    view.cost.textContent = forClient ? '' : jobCostText(job);
     const active = isActive(job.status);
     view.progressSlot.hidden = !active;
     if (active) view.progress.update(job, meta);
     const sig = `${job.status}|${job.error || ''}|${job.warnings.length}`;
     if (sig !== view.sig) {
       view.sig = sig;
-      const error = job.status === 'failed' && job.error ? (customer ? customerError(job.error) : job.error) : null;
+      const error = job.status === 'failed' && job.error ? (forClient ? customerError(job.error) : job.error) : null;
       replace(view.notesSlot, error ? callout('error', error) : null,
-        (customer ? customerWarnings(job.warnings) : job.warnings).map((w) => callout('warning', w)));
+        (forClient ? customerWarnings(job.warnings) : job.warnings).map((w) => callout('warning', w)));
     }
     if (!view.results) {
       view.results = createResults(job, {
-        compare: true, vectorsOpen: !customer, customer, onRetry: (j, v) => retryVariant(view, j, v),
+        compare: true, vectorsOpen: !forClient, customer: forClient, onRetry: (j, v) => retryVariant(view, j, v),
       });
       view.resultsSlot.appendChild(view.results.el);
     } else {
@@ -793,7 +827,7 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
       release(view);
       const ok = job.variants.filter((v) => v.status === 'succeeded').length;
       if (job.status === 'failed') {
-        const why = customer ? customerError(job.error) : job.error || 'unknown error';
+        const why = forClient ? customerError(job.error) : job.error || 'unknown error';
         if (view.fresh) toast(`Generation failed: ${why}`, { kind: 'error' });
         announce('Generation failed.');
       } else {
@@ -808,9 +842,10 @@ export function initRecreate(root, { customer = false, keyPrefix = 'customer' } 
   // controls' server defaults; nothing here is stored between visits.
   const cleanup = stepCard('', 'Clean-up', [removeField, fidelity.el, seamless.el, correct.el, background.el, notesField]);
   cleanup.hidden = true;
-  // The customer page makes everything with the server's defaults (default model, 2K), and shows none of it.
+  // /customerep makes everything with the server's defaults (default model, 2K), and shows none of it; /panels shows
+  // the output settings (model, resolution), as the studio page does.
   const outputCard = stepCard(3, 'Output', [output.el]);
-  outputCard.hidden = customer;
+  outputCard.hidden = forClient;
   replace(root, h('div', { class: 'recreate-layout' },
     h('div', { class: 'recreate-form' },
       // the customer page asks which panels first, then one picture per panel

@@ -38,6 +38,11 @@ const BN = new Map(Object.entries({
   'Which panels to make': 'কোন কোন প্যানেল বানাবেন',
   'Choose any of them, or all three. With one panel, the picture you add is the reference for that panel.': 'যেকোনোটি বা তিনটিই বাছাই করুন। একটি প্যানেল বাছাই করলে আপনার দেওয়া ছবিটিই হবে সেই প্যানেলের রেফারেন্স।',
   'Choose at least one panel.': 'অন্তত একটি প্যানেল বাছাই করুন।',
+  // The studio page's link to /panels and the way back (2026-11-07; the button text is the owner's wording).
+  'Generate production-ready panels': 'প্রোডাকশন-রেডি প্যানেল জেনারেট করুন',
+  'Front, back and sleeve, on their own page: choose the panels, then add a picture for each.': 'ফ্রন্ট, ব্যাক ও স্লিভ, আলাদা পেজে: আগে প্যানেল বাছাই করুন, তারপর প্রতিটির ছবি দিন।',
+  'Main page': 'মূল পেজ',
+  'Back to the studio page': 'মূল পেজে ফিরে যান',
   // The customer page's picture per panel (recreate.js, the owner's wording 2026-11-04).
   'Upload a picture (default)': 'ছবি আপলোড করুন (ডিফল্ট)',
   'Front and back the same': 'ফ্রন্ট আর ব্যাক একই',
@@ -182,6 +187,7 @@ const BN = new Map(Object.entries({
   'If one picture shows both sides, add it to both slots: box the front in the first and the back in the second.': 'একটি ছবিতে দুই দিকই থাকলে সেটা দুই ঘরেই দিন: প্রথমটিতে ফ্রন্ট আর দ্বিতীয়টিতে ব্যাক বক্স করুন।',
   'View front picture': 'ফ্রন্টের ছবি দেখুন',
   'View back picture': 'ব্যাকের ছবি দেখুন',
+  'View sleeve picture': 'স্লিভের ছবি দেখুন',
   'Reference image added.': 'রেফারেন্স ছবি যোগ হয়েছে।',
   'Back picture added.': 'ব্যাকের ছবি যোগ হয়েছে।',
   'Panels are always made at their 3XL print size at 300 dpi: front and back 25 × 34 in, sleeve 24 × 14 in.': 'প্যানেল সবসময় 3XL প্রিন্ট সাইজে 300 dpi-তে তৈরি হয়: ফ্রন্ট ও ব্যাক 25 × 34 ইঞ্চি, স্লিভ 24 × 14 ইঞ্চি।',
@@ -633,7 +639,8 @@ const PATTERNS = [
   [/^Could not make the back from the front: (.*)$/, 'ফ্রন্ট থেকে ব্যাক বানানো যায়নি: $1'],
   [/^Request failed \(error (\d+)\)\.$/, 'অনুরোধ ব্যর্থ হয়েছে (ত্রুটি $1)।'],
   [/^The server had a problem \(error (\d+)\)\. Please try again\.$/, 'সার্ভারে সমস্যা হয়েছে (ত্রুটি $1)। আবার চেষ্টা করুন।'],
-  [/^Generation failed: (.*)$/, 'তৈরি করা ব্যর্থ: $1'],
+  // the reason too (e.g. /customerep's "It could not be made this time. Please try again.", or an OpenAI error)
+  [/^Generation failed: (.*)$/, (_, why) => `তৈরি করা ব্যর্থ: ${tr(why)}`],
   [/^The design failed\.(.*)$/, 'ডিজাইনটি ব্যর্থ হয়েছে।$1'],
   [/^Export failed: (.*)$/, (_, why) => `এক্সপোর্ট ব্যর্থ: ${lookup(why) || why}`],
   [/^ZIP download failed: (.*)$/, (_, why) => `জিপ ডাউনলোড ব্যর্থ: ${lookup(why) || why}`],

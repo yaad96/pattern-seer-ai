@@ -276,6 +276,8 @@ a { color: var(--accent-text); }
 /* /customerep (the client demo page): no History tab and no model status. */
 [data-app="customer"] #tab-history, [data-app="customer"] #provider-status,
 [data-app="experiment"] #tab-history, [data-app="experiment"] #provider-status { display: none; }
+/* /panels (the studio's panel page): no History tab; the model status stays. */
+[data-app="panels"] #tab-history { display: none; }
 
 .choices { display: grid; gap: 8px; }
 .choice { position: relative; display: block; cursor: pointer; }
@@ -296,6 +298,15 @@ a { color: var(--accent-text); }
 .choice-title { font-weight: 650; }
 .choice-desc { grid-column: 2; font-size: 12.5px; color: var(--text-3); }
 .choice-note { grid-column: 2; margin-top: 2px; font-size: 12.5px; color: var(--accent-text); } /* a second line in another colour */
+/* The studio page's link to /panels, among the output-type cards: an arrow instead of the radio dot. */
+.choice-link { color: inherit; text-decoration: none; }
+.choice-link .choice-box::before {
+  content: "→"; content: "→" / ""; /* decoration: no "right arrow" in the link's name (the plain line is the fallback) */
+  width: auto; height: auto; margin-top: 0; border: 0; border-radius: 0; background: none;
+  color: var(--accent-text); font-weight: 700; line-height: 1.35;
+}
+.choice-link:focus-visible { outline: none; }
+.choice-link:focus-visible .choice-box { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }

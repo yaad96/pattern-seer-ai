@@ -30,3 +30,6 @@ static/examples/*.webp
 
 # The production prompt set: its own private repository (pattern-seer-prompts)
 prompts-private/
+
+# Billing exports from the OpenAI / Anthropic dashboards (private)
+downloaded_csvs/

@@ -276,6 +276,16 @@ export function toggleGroup({ legend, options, values, onChange, hint }) {
   return { el, get values() { return inputs.filter((i) => i.input.checked).map((i) => i.opt.value); } };
 }
 
+/** A choice card's "reference → result" thumbnails ({before, after} picture URLs). */
+export function choiceExample(example) {
+  return h('span', { class: 'choice-example' },
+    h('span', { class: 'choice-example-cap' }, 'Example: reference → result'),
+    h('span', { class: 'choice-example-imgs' },
+      h('img', { src: example.before, alt: 'Before', loading: 'lazy' }),
+      h('span', { class: 'choice-example-arrow', 'aria-hidden': 'true' }, '→'),
+      h('img', { src: example.after, alt: 'After', loading: 'lazy' })));
+}
+
 /** Radio cards with a title and a description (catalog entries). */
 export function choiceCards({ legend, options, value, onChange }) {
   const name = uid('choice');
@@ -289,12 +299,7 @@ export function choiceCards({ legend, options, value, onChange }) {
         h('span', { class: 'choice-title' }, opt.label),
         opt.description ? h('span', { class: 'choice-desc' }, opt.description) : null,
         opt.note ? h('span', { class: 'choice-note' }, opt.note) : null,
-        opt.example ? h('span', { class: 'choice-example' },
-          h('span', { class: 'choice-example-cap' }, 'Example: reference → result'),
-          h('span', { class: 'choice-example-imgs' },
-            h('img', { src: opt.example.before, alt: 'Before', loading: 'lazy' }),
-            h('span', { class: 'choice-example-arrow', 'aria-hidden': 'true' }, '→'),
-            h('img', { src: opt.example.after, alt: 'After', loading: 'lazy' }))) : null));
+        opt.example ? choiceExample(opt.example) : null));
   }));
   return {
     el: h('fieldset', { class: 'fieldset field' }, h('legend', { class: 'field-label' }, legend), list),

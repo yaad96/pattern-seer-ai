@@ -308,10 +308,19 @@ export function initHistory(root, { onContinue, onDeleted }) {
       const parts = [];
       if (job.status === 'failed' && job.error) parts.push(callout('error', job.error));
       for (const w of job.warnings || []) parts.push(callout('warning', w));
+      const o = job.options || {};
+      const panelJob = job.kind === 'recreate' && o.mode === 'panels';
+      // the first chosen panel (the server stores them in front, back, sleeve order); jobs before 2026-11-04 had
+      // no choice: the front
+      const first = (Array.isArray(o.panels) && o.panels[0]) || 'front';
+      const PICTURE = { front: 'Front picture', back: 'Back picture', sleeve: 'Sleeve picture' };
       const inputs = (job.inputs || []).map((name, i) => {
         const src = fileUrl(job.id, name);
-        // A recreate job has one reference, or (panels with their own back picture) a front and a back picture.
-        const recreateLabel = job.inputs.length > 1 ? ['Front picture', 'Back picture'][i] || 'Reference image' : 'Reference image';
+        // A recreate job has one reference picture. A panel job with more than one has the first chosen panel's
+        // (input_1.png), maybe the back's own (input_2.png) and the sleeve's (input_3.png, since 2026-11-04), so
+        // each is named by its file, not its place in the list.
+        const own = { 'input_1.png': PICTURE[first], 'input_2.png': PICTURE.back, 'input_3.png': PICTURE.sleeve }[name];
+        const recreateLabel = panelJob && job.inputs.length > 1 && own ? own : 'Reference image';
         const label = job.kind === 'recreate' ? recreateLabel : `Attached image ${i + 1}`;
         return h('button', {
           type: 'button', class: 'thumb', 'aria-label': `View ${label.toLowerCase()}`,

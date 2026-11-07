@@ -279,6 +279,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "print_dpi": settings.print_dpi,
             "login_enabled": bool(settings.app_password),
+            "panels_page": settings.panels_page,  # the studio page links to /panels only when it is served
             "catalog": catalog.as_dict(),
             "defaults": {
                 "recreate": RecreateOptions().model_dump(mode="json"),
@@ -547,13 +548,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/customerep", include_in_schema=False)
     async def customer_page() -> HTMLResponse:
         """The page for showing clients a demo: the same app, marked data-app="customer" before any script runs,
-        so it shows only production panels and no output settings, models, costs, prompts, History or Design."""
+        so it shows only production panels (and Design) and no output settings, models, costs, prompts or History."""
         return marked_page("customer")
 
     @app.get("/experiment", include_in_schema=False)
     async def experiment_page() -> HTMLResponse:
         """A copy of /customerep for trying other image models (studio login only; its own saved state)."""
         return marked_page("experiment")
+
+    @app.get("/panels", include_in_schema=False)
+    async def panels_page() -> HTMLResponse:
+        """The studio's production panels (studio login only; the demo login is sent to /customerep): the /customerep
+        flow with the studio's details (output settings, View prompt, costs, image details), the back mirrored or
+        copied, and the full Design tab; its own saved state. Not served when panels_page is off
+        (JERSEY_PANELS_PAGE=false)."""
+        if not settings.panels_page:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return marked_page("panels")
 
     app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
     return app

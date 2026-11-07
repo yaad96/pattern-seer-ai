@@ -226,10 +226,12 @@ function createDesignSettings(config, onChange, customer) {
 
 /** customer: the /customerep page for showing clients a demo: no AI designer or output settings, prompt, model
  * names or costs, and its own saved conversation. */
-export function initDesign(root, { customer = false, keyPrefix = 'customer' } = {}) {
+export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
   const config = getConfig();
   const limits = config.limits;
-  const sessionKey = customer ? `${keyPrefix}.design.session` : SESSION_KEY;
+  // each page keeps its own chat: /customerep and /experiment (customer), and /panels (the studio's full Design)
+  const prefix = keyPrefix || (customer ? 'customer' : null);
+  const sessionKey = prefix ? `${prefix}.design.session` : SESSION_KEY;
   const state = { sessionId: null, turns: [], parent: null, epoch: 0, attachments: [], sending: false, loading: false };
   const settings = createDesignSettings(config, () => updateComposer(), customer);
   const progressOpts = { stageText: customer ? withoutModel : null };

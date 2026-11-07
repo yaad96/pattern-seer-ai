@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # make each finished panel job's print PNGs and detailed EPS in the background, so the downloads and ZIPs are
     # ready (or nearly) when asked for; on for the online server, where tracing is slow
     prepare_downloads: bool = False
+    # /panels, the studio's production-panel page (studio login), which the studio page links to; on here and on the
+    # online server (the owner, 2026-11-07). JERSEY_PANELS_PAGE=false turns it and the link off
+    panels_page: bool = True
     max_upload_mb: int = 20
     max_attachments: int = 3
     max_message_chars: int = 4000
