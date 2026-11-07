@@ -95,28 +95,12 @@ JobManager (async jobs, retries, per-call ledger, background preparation of down
    └─ storage    one folder per job, with an append-only call ledger
 ```
 
-## Quick start
+## Access
 
-```bash
-git clone https://github.com/yaad96/pattern-seer-ai
-cd pattern-seer-ai
-./run.sh          # serves http://127.0.0.1:8000
-```
-
-API keys are read only from key files in the project root (`.openai_api_key`, and optionally `.anthropic_api_key`).
-Without them, the app runs an offline mock. Settings are described in `.env.example`.
-
-The prompt templates and the descriptor vocabulary in this repository are **structural placeholders**: the same
-sections, variables and data channels, in generic wording. The production prompt set is maintained privately and
-replaces them at runtime when present.
-
-## Limitations and future work
-
-- **The evaluation is engineering-level.** A paired benchmark of client references against the factory's final files
-  comes next.
-- **Paired parts share one design,** so a part that differs between left and right loses its unique details.
-- **Complexity-routed inference (planned):** cheaper open-weight editors for simple designs and the frontier model
-  for complex ones, with a prompt dialect for short-context text encoders.
+The prompt engineering behind Pattern Seer AI is proprietary. The prompt templates and the descriptor vocabulary in
+this repository are structural placeholders: the application runs with them, but not with the production prompt set.
+If you're interested in discussing the exact prompts, or in running the full system on your own machine, please get
+in touch through my GitHub profile.
 
 ## Stack
 
