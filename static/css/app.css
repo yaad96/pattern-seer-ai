@@ -39,6 +39,7 @@
   --info: #1f62b8;
   --info-soft: #e8f1fc;
   --guess: #6b46c1;
+  --chart-bar: #2f5bea; /* the dashboard's one series; checked with the dataviz validator against both surfaces */
   --checker-a: #ffffff;
   --checker-b: #e8ebf0;
   --toast-bg: #1d2230;
@@ -78,6 +79,7 @@
     --info: #7fb0f7;
     --info-soft: rgba(121, 170, 245, 0.13);
     --guess: #b79cff;
+    --chart-bar: #5577f5;
     --checker-a: #2a303b;
     --checker-b: #21262f;
     --toast-bg: #eef1f6;
@@ -278,6 +280,8 @@ a { color: var(--accent-text); }
 [data-app="experiment"] #tab-history, [data-app="experiment"] #provider-status { display: none; }
 /* /panels (the studio's panel page): no History tab; the model status stays. */
 [data-app="panels"] #tab-history { display: none; }
+/* The dashboard is only on the studio page. */
+[data-app="customer"] #tab-dashboard, [data-app="experiment"] #tab-dashboard, [data-app="panels"] #tab-dashboard { display: none; }
 
 .choices { display: grid; gap: 8px; }
 .choice { position: relative; display: block; cursor: pointer; }
@@ -819,6 +823,57 @@ dialog::backdrop { background: rgba(8, 11, 18, 0.55); }
 .history-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
 .history-toolbar h2 { font-size: 20px; font-weight: 700; }
 .history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+
+/* ---------- Dashboard (dashboard.js) ---------- */
+.dash-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; margin-bottom: 8px; }
+.dash-type { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+.dash-body { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
+.dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.dash-tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); box-shadow: var(--shadow-1);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.dash-tile-label { font-size: 12.5px; color: var(--text-3); font-weight: 600; }
+.dash-tile-value { font-size: 24px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-tile-unit { color: var(--text-3); font-weight: 400; }
+.dash-tile-sub { font-size: 12.5px; color: var(--text-2); }
+.dash-plot { position: relative; }
+.dash-bars {
+  display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; align-items: end;
+  height: 160px; border-bottom: 1px solid var(--border-strong);
+}
+.dash-bar-col { height: 100%; display: flex; align-items: flex-end; cursor: default; outline: none; border-radius: 4px 4px 0 0; }
+.dash-bar-col:hover, .dash-bar-col:focus-visible { background: var(--surface-2); }
+.dash-bar-col:focus-visible { box-shadow: 0 0 0 2px var(--accent-ring); }
+.dash-bar { width: 100%; max-width: 28px; margin: 0 auto; background: var(--chart-bar); border-radius: 4px 4px 0 0; }
+.dash-axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); margin-top: 6px; }
+.dash-tip {
+  position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; z-index: 2;
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--radius);
+  background: var(--toast-bg); color: var(--toast-text); font-size: 12.5px; box-shadow: var(--shadow-2); white-space: nowrap;
+}
+.dash-days { display: flex; flex-direction: column; gap: 16px; }
+.dash-scroll { overflow-x: auto; }
+.dash-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dash-table th {
+  text-align: left; font-size: 12px; font-weight: 600; color: var(--text-3); padding: 6px 8px;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.dash-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
+.dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dash-table .nowrap { white-space: nowrap; }
+.dash-table tr.dash-job.is-open > td { background: var(--surface-2); }
+.dash-table tr.dash-calls > td { background: var(--surface-2); padding: 0 8px 12px 48px; }
+.dash-calltable { font-size: 12.5px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.dash-jobcell { display: flex; align-items: center; gap: 10px; }
+.dash-thumb { width: 36px; height: 36px; flex: none; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); }
+.dash-thumb.is-empty { display: inline-block; }
+.dash-id { font-size: 12px; color: var(--text-2); }
+.dash-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.dash-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.dash-error { color: var(--danger); white-space: normal; max-width: 320px; }
+.dash-job .chev { transition: transform 0.15s; }
+.dash-job .chev.is-open { transform: rotate(180deg); }
 .job-card {
   display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; text-align: left;
   border: 1px solid var(--border); border-radius: var(--radius-l); background: var(--surface);

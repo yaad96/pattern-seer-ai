@@ -131,6 +131,11 @@ export const api = {
     });
   },
 
+  /** GET /api/admin/usage?days= (studio login) -> {jobs: [...with their paid calls]} for the dashboard; 0 = all. */
+  adminUsage(days) {
+    return request('GET', `/api/admin/usage?days=${encodeURIComponent(String(days))}`);
+  },
+
   /** GET /api/jobs -> JobSummary[] (newest first). */
   listJobs({ limit, kind, sessionId } = {}) {
     const q = new URLSearchParams();

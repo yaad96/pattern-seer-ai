@@ -411,5 +411,6 @@ export function initHistory(root, { onContinue, onDeleted }) {
     activate() {
       refresh();
     },
+    open: openJob, // the dashboard's "Details" button opens the same drawer
   };
 }

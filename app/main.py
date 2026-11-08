@@ -181,6 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ", ".join(registry.image_providers) or "none",
             ", ".join(registry.brief_writers) or "none",
         )
+        manager.ensure_usage_ledger()  # first, so the calls recover_interrupted logs land after the backfill
         fixed = manager.recover_interrupted()
         if fixed:
             log.info("marked %d interrupted job(s) as failed", fixed)
@@ -286,6 +287,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "design": DesignOptions().model_dump(mode="json"),
             },
         }
+
+    @app.get("/api/admin/usage")
+    async def admin_usage(request: Request, days: int = Query(30, ge=0, le=3650)) -> dict:
+        """The admin dashboard (studio login only): every job created or with a paid API call in the last `days`
+        days (0 = all), with each call's tokens and cost, including jobs deleted since (app/usage.py)."""
+        if is_demo(request):  # the middleware already refuses it; this keeps it so if DEMO_ROUTES ever widens
+            raise HTTPException(403, "The demo login can only use the demo page.")
+        return await asyncio.to_thread(manager.usage_report, days)
 
     @app.post("/api/recreate", status_code=202, response_model=JobCreated)
     async def recreate(

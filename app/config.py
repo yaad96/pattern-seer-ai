@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     # /panels, the studio's production-panel page (studio login), which the studio page links to; on here and on the
     # online server (the owner, 2026-11-07). JERSEY_PANELS_PAGE=false turns it and the link off
     panels_page: bool = True
+    # the Dashboard counts nothing from before this date or time (ISO, e.g. 2026-11-08 = midnight on this machine's
+    # clock); empty = everything. The owner's Mac's .env sets 2026-11-08; the online server shows everything
+    dashboard_since: str = ""
     max_upload_mb: int = 20
     max_attachments: int = 3
     max_message_chars: int = 4000

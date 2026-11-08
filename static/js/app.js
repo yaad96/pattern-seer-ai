@@ -5,12 +5,13 @@
 import './i18n.js';
 import { loadConfig } from './api.js';
 import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
+import { initDashboard } from './dashboard.js';
 import { initDesign } from './design.js';
 import { initHistory } from './history.js';
 import { initRecreate } from './recreate.js';
 import { callout } from './ui.js';
 
-const TABS = ['recreate', 'design', 'history'];
+const TABS = ['recreate', 'design', 'history', 'dashboard']; // the dashboard only on the studio page
 // /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
 // Design, without the History tab, the model status, the output settings, costs or prompts.
 // /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
@@ -191,7 +192,13 @@ async function boot() {
         recreate.forgetJob(jobId);
       },
     });
-    tabs = initTabs((name) => { if (name === 'history') historyTab.activate(); });
+    const dashboardTab = initDashboard(document.getElementById('panel-dashboard'), {
+      onOpenJob: (jobId) => historyTab.open(jobId),
+    });
+    tabs = initTabs((name) => {
+      if (name === 'history') historyTab.activate();
+      if (name === 'dashboard') dashboardTab.activate();
+    });
     wireGlobalInput(tabs, recreate, design);
     bootEl.remove();
   } catch (err) {

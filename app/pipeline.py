@@ -27,7 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 from pydantic import ValidationError
 
-from app import pricing
+from app import pricing, usage
 from app.config import Settings
 from app.imaging import io as imgio
 from app.imaging.eps import combine_eps, eps_size, is_current_eps, physical_size_pt, raster_eps, vector_to_eps
@@ -278,6 +278,27 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         self._prep_tasks: set[asyncio.Task] = set()  # prepare_downloads; not in _running, so retries are not blocked
         self._vector_locks: dict[tuple[str, int, str], asyncio.Lock] = {}
+        # every paid call in one append-only file, which outlives a deleted job (the admin dashboard; app/usage.py)
+        self.usage_ledger = store.root.parent / usage.LEDGER
+
+    # ------------------------------------------------------------------
+    # admin dashboard (app/usage.py)
+    # ------------------------------------------------------------------
+
+    def ensure_usage_ledger(self) -> None:
+        """At start-up, before anything is logged: create the usage ledger from the existing call logs, once."""
+        try:
+            written = usage.backfill(self.usage_ledger, self.store, self.call_log)
+        except OSError:
+            log.exception("could not create the usage ledger %s", self.usage_ledger)
+            return
+        if written:
+            log.info("usage ledger created from %d logged API call(s)", written)
+
+    def usage_report(self, days: int = 30) -> dict:
+        """Jobs and their paid API calls for the dashboard (run in a worker thread: it reads every job's files)."""
+        floor = usage.parse_floor(self.settings.dashboard_since)
+        return usage.build_report(self.store, self.usage_ledger, self.call_log, days, floor=floor)
 
     # ------------------------------------------------------------------
     # job cache / persistence
@@ -325,11 +346,16 @@ class JobManager:
     def delete(self, job_id: str) -> bool:
         if job_id in self._running:
             raise JobError("This job is still running.", 409)
-        self._cache.pop(job_id, None)
+        job = self._cache.pop(job_id, None)
         try:
-            return self.store.delete(job_id)
+            if job is None:
+                job = self.store.load(job_id)
+            deleted = self.store.delete(job_id)
         except ValueError:
             return False
+        if deleted and job is not None:  # its calls stay in the usage ledger; note the deletion there too
+            usage.append(self.usage_ledger, usage.deleted_line(job))
+        return deleted
 
     def recover_interrupted(self, scan: int = 500) -> int:
         """Mark jobs left queued/running by a previous process as failed (partial when some images were done). The API
@@ -1244,11 +1270,13 @@ class JobManager:
             if cost is None:
                 variant.uncosted_calls += 1
         job.calls_in_flight = [c for c in job.calls_in_flight if c.get("key") != key]
-        line = json.dumps({"n": job.api_calls, "job_id": job.id, **record}, ensure_ascii=False, default=str)
+        full = {"n": job.api_calls, "job_id": job.id, **record}
+        line = json.dumps(full, ensure_ascii=False, default=str)
         try:
             self.store.append_line(job.id, CALL_LOG, line)
         except (OSError, ValueError):
             log.exception("job %s: could not write the API call log", job.id)
+        usage.append(self.usage_ledger, usage.ledger_line(full, job))  # the same call, without prompts or pictures
         self._save(job)
 
     def _recount_calls(self, job: Job) -> None:
