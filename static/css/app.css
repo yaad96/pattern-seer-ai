@@ -167,6 +167,10 @@ a { color: var(--accent-text); }
 }
 .tab:focus-visible { outline-offset: -4px; border-radius: 8px; }
 .header-end { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Main page link (/panels) and Log out (every page), after the model status. Where the status is hidden (the client
+   demo page, /experiment), they move to the right edge themselves. */
+.header-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+[data-app="customer"] .header-actions, [data-app="experiment"] .header-actions { margin-left: auto; }
 .status-pill {
   display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
   padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px;

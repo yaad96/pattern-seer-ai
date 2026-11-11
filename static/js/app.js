@@ -59,6 +59,16 @@ function renderCustomerBanner(config) {
     h('div', { class: 'banner-inner' }, icon('alert'), h('p', null, h('strong', null, 'Demo mode: these images are placeholders, not AI.')))));
 }
 
+/** The header's right-hand buttons on every page: `extras` (the /panels page's "Main page" link), then Log out
+ * whenever the login is on (2026-11-10: the owner asked for it on every page, the client demo page included). */
+function renderHeaderActions(config, extras = []) {
+  const items = [...extras];
+  if (config.login_enabled) {
+    items.push(h('a', { class: 'btn btn-sm', href: '/logout' }, icon('logout'), 'Log out'));
+  }
+  if (items.length) document.querySelector('.app-header-inner').appendChild(h('div', { class: 'header-actions' }, items));
+}
+
 function initTabs(onShow, names = TABS) {
   const tabs = names.map((name) => document.getElementById(`tab-${name}`));
   const panels = names.map((name) => document.getElementById(`panel-${name}`));
@@ -145,6 +155,7 @@ async function boot() {
   if (CUSTOMER) {
     try {
       renderCustomerBanner(config);
+      renderHeaderActions(config);
       const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: MODE });
       const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: MODE });
       const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab
@@ -160,8 +171,8 @@ async function boot() {
     try {
       renderStatus(config);
       renderBanner(config);
-      document.getElementById('provider-status').after(
-        h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the studio page' }, icon('arrow-left'), 'Main page'));
+      renderHeaderActions(config,
+        [h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the studio page' }, icon('arrow-left'), 'Main page')]);
       const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, staff: true, keyPrefix: MODE });
       const design = initDesign(document.getElementById('panel-design'), { keyPrefix: MODE });
       const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab (it is on the studio page)
@@ -176,9 +187,7 @@ async function boot() {
   try {
     renderStatus(config);
     renderBanner(config);
-    if (config.login_enabled) {
-      document.getElementById('provider-status').after(h('a', { class: 'btn btn-sm btn-ghost', href: '/logout' }, 'Log out'));
-    }
+    renderHeaderActions(config);
     const recreate = initRecreate(document.getElementById('panel-recreate'));
     const design = initDesign(document.getElementById('panel-design'));
     let tabs = null;
