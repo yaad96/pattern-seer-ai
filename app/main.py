@@ -42,6 +42,7 @@ from app.security import (
     credentials_role,
     make_session,
 )
+from app.site_switch import CLOSED_STATUS, SiteSwitch
 from app.storage import SESSION_ID_RE, JobStore, is_valid_job_id
 
 __version__ = "1.0.0"
@@ -65,6 +66,10 @@ class NoCacheStaticFiles(StaticFiles):
         response = super().file_response(*args, **kwargs)
         response.headers["Cache-Control"] = "no-cache"
         return response
+
+
+class SiteSwitchRequest(BaseModel):
+    closed: bool
 
 
 class PromptPreviewRequest(BaseModel):
@@ -199,7 +204,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.manager = manager
     app.state.registry = registry
-    app.add_middleware(SecurityMiddleware, settings=settings)
+    site = SiteSwitch(settings.output_dir)  # the dashboard's open/closed switch, kept in outputs/site_closed.json
+    app.state.site = site
+    app.add_middleware(SecurityMiddleware, settings=settings, site=site)
 
     # -- helpers ---------------------------------------------------------------
 
@@ -281,12 +288,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "print_dpi": settings.print_dpi,
             "login_enabled": bool(settings.app_password),
             "panels_page": settings.panels_page,  # the studio page links to /panels only when it is served
+            "site_closed": site.closed,  # the studio pages show a reminder banner while the site is closed
             "catalog": catalog.as_dict(),
             "defaults": {
                 "recreate": RecreateOptions().model_dump(mode="json"),
                 "design": DesignOptions().model_dump(mode="json"),
             },
         }
+
+    @app.get("/api/admin/site")
+    async def site_state(request: Request) -> dict:
+        """The dashboard's site switch (studio login only): {closed, since}."""
+        if is_demo(request):
+            raise HTTPException(403, "The demo login can only use the demo page.")
+        return dict(site.state)
+
+    @app.post("/api/admin/site")
+    async def site_switch(request: Request, body: SiteSwitchRequest) -> dict:
+        """Close the site (only the studio login can use it; everyone else gets a plain 404, as if nothing were there)
+        or open it again. The server keeps running; jobs already under way finish."""
+        if is_demo(request):
+            raise HTTPException(403, "The demo login can only use the demo page.")
+        return await asyncio.to_thread(site.set, body.closed)
 
     @app.get("/api/admin/usage")
     async def admin_usage(request: Request, days: int = Query(30, ge=0, le=3650)) -> dict:
@@ -521,6 +544,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/login", include_in_schema=False)
     async def login(username: str = Form(""), password: str = Form(""), next: str = Form("/")) -> Response:
         role = credentials_role(settings, username, password) if settings.app_password else None
+        if role == "demo" and site.closed:  # closed on the dashboard: only the studio login may sign in; a plain 404
+            return Response(status_code=CLOSED_STATUS, headers={"Cache-Control": "no-store"})
         if role:
             # the demo login goes to the demo page, whatever page it came from
             response = RedirectResponse("/customerep" if role == "demo" else _safe_next(next), status_code=303)

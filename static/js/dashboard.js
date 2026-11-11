@@ -5,10 +5,10 @@
  * appears on both days, each row with that day's calls, so a day's total is exactly what was spent that day.
  */
 import { api, fileUrl, getConfig } from './api.js';
-import { h, icon, replace, fmtInt, fmtSeconds, fmtUsd, storage } from './dom.js';
+import { h, icon, replace, fmtDateTime, fmtInt, fmtSeconds, fmtUsd, storage } from './dom.js';
 import { statusBadge } from './jobs.js';
 import { modelLabel } from './results.js';
-import { callout, loadingRow, segmented, toast } from './ui.js';
+import { callout, confirmDialog, loadingRow, segmented, setBusy, toast } from './ui.js';
 
 const PREFS_KEY = 'dashboard.prefs';
 const DAY_MS = 86400000;
@@ -75,7 +75,7 @@ function addInto(total, part) {
   return total;
 }
 
-export function initDashboard(root, { onOpenJob } = {}) {
+export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
   const saved = storage.get(PREFS_KEY, {}) || {};
   const prefs = { range: '30', zone: 'utc', who: 'all', type: 'all', ...saved };
   let report = null;
@@ -102,11 +102,65 @@ export function initDashboard(root, { onOpenJob } = {}) {
   csvBtn.addEventListener('click', () => downloadCsv());
   const note = h('p', { class: 'hint' });
   const body = h('div', { class: 'dash-body' });
+  const siteBox = h('section', { class: 'card dash-site' }, h('div', { class: 'card-body' }, loadingRow('Loading…')));
 
   replace(root,
     h('div', { class: 'history-toolbar' }, h('h2', null, 'Dashboard'), h('span', { class: 'spacer' }), refreshBtn, csvBtn),
+    siteBox,
     h('div', { class: 'dash-filters' }, range.el, zone.el, who.el, h('label', { class: 'dash-type' }, h('span', { class: 'field-label' }, 'Output type'), typeSel)),
     note, body);
+
+  /* ---------- the site switch (app/site_switch.py, 2026-11-11): close the site for everyone but the studio login,
+     who then get a plain "page not found" (404), as if the site weren't there; open it again here ---------- */
+  let siteBusy = false;
+
+  async function loadSite() {
+    try {
+      renderSite(await api.siteState());
+    } catch (err) {
+      replace(siteBox, h('div', { class: 'card-body' }, callout('error', err.message)));
+    }
+  }
+
+  function renderSite(state) {
+    const closed = Boolean(state.closed);
+    if (onSiteChange) onSiteChange(closed);
+    const btn = h('button', { type: 'button', class: ['btn', closed ? 'btn-primary' : 'btn-danger-solid'] },
+      icon(closed ? 'check' : 'x'), closed ? 'Open the site' : 'Close the site');
+    btn.addEventListener('click', () => switchSite(!closed, btn));
+    replace(siteBox, h('div', { class: 'card-body dash-site-body' },
+      h('div', { class: 'dash-site-text' },
+        h('div', { class: 'dash-site-head' },
+          h('h3', { class: 'card-title' }, 'Site'),
+          h('span', { class: ['badge', 'badge-dot', closed ? 'badge-danger' : 'badge-success'] }, closed ? 'Closed' : 'Open'),
+          state.since ? h('span', { class: 'muted' }, `Since ${fmtDateTime(state.since)}`) : null),
+        h('p', { class: 'hint' }, closed
+          ? 'Only your studio login can use the site. Everyone else, the demo link included, gets a “page not found” (404) error, as if the site weren’t there.'
+          : 'Everyone can use the site, the demo link included. Closing it shows them a “page not found” (404) error until you open it again here.'),
+        h('p', { class: 'hint' }, 'This switch controls this server only.')),
+      btn));
+  }
+
+  async function switchSite(close, btn) {
+    if (siteBusy) return;
+    if (close && !(await confirmDialog({
+      title: 'Close the site?',
+      message: 'The demo link and everyone not signed in as studio will get a “page not found” (404) error until you open the site again here. Images being made right now still finish.',
+      confirmLabel: 'Close the site',
+      danger: true,
+    }))) return;
+    siteBusy = true;
+    setBusy(btn, true, close ? 'Closing…' : 'Opening…');
+    try {
+      renderSite(await api.setSiteClosed(close));
+      toast(close ? 'The site is closed.' : 'The site is open again.', { kind: close ? 'warning' : 'success' });
+    } catch (err) {
+      setBusy(btn, false);
+      toast(err.message, { kind: 'error' });
+    } finally {
+      siteBusy = false;
+    }
+  }
 
   /* ---------- data ---------- */
   async function load() {
@@ -448,6 +502,7 @@ export function initDashboard(root, { onOpenJob } = {}) {
 
   return {
     activate() {
+      loadSite();
       if (!loading) load();
     },
   };

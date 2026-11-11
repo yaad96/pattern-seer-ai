@@ -182,6 +182,8 @@ a { color: var(--accent-text); }
 .status-pill.is-demo .status-dot { background: var(--warning); }
 
 .banner { background: var(--warning-soft); border-bottom: 1px solid var(--warning-border); color: var(--text); }
+.banner.is-closed { background: var(--danger-soft); border-bottom-color: var(--danger-border); } /* the site switch */
+.banner.is-closed .banner-inner .icon { color: var(--danger); }
 .banner-inner {
   max-width: var(--max-w); margin: 0 auto; padding: 10px 24px;
   display: flex; align-items: flex-start; gap: 10px;
@@ -830,6 +832,11 @@ dialog::backdrop { background: rgba(8, 11, 18, 0.55); }
 
 /* ---------- Dashboard (dashboard.js) ---------- */
 .dash-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; margin-bottom: 8px; }
+.dash-site { margin-bottom: 18px; }
+.dash-site-body { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; }
+.dash-site-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dash-site-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.dash-site-body > .btn { flex: none; }
 .dash-type { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
 .dash-body { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
 .dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }

@@ -15,11 +15,15 @@ from urllib.parse import quote
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import Settings
+from app.site_switch import CLOSED_DETAIL, CLOSED_STATUS, SiteSwitch
 
 SESSION_COOKIE = "jhs_session"
 SESSION_DAYS = 30
 PUBLIC_PATHS = frozenset({"/api/health", "/login", "/logout"})
 API_PREFIXES = ("/api/", "/files/")
+# While the site is closed (the dashboard's switch), these still answer everyone: the login page, so the studio login
+# can always get in (a demo sign-in is refused there), signing out, and the health check.
+OPEN_WHEN_CLOSED = PUBLIC_PATHS
 
 SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
@@ -116,9 +120,10 @@ def _session_cookie(scope: Scope) -> str:
 class SecurityMiddleware:
     """Pure-ASGI middleware: login required when APP_PASSWORD is set, plus security headers."""
 
-    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings, site: SiteSwitch | None = None) -> None:
         self.app = app
         self.settings = settings
+        self.site = site  # the dashboard's open/closed switch (None: always open)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -127,6 +132,9 @@ class SecurityMiddleware:
         path = scope.get("path", "")
         role = session_role(self.settings, _session_cookie(scope)) if self.settings.app_password else "full"
         scope["jhs_role"] = role  # the routes limit the demo login to its own jobs
+        if self.site is not None and self.site.closed and role != "full" and path not in OPEN_WHEN_CLOSED:
+            await self._send_closed(send, path)
+            return
         blocked = None
         if self.settings.app_password and path not in PUBLIC_PATHS:
             if role is None:
@@ -151,6 +159,20 @@ class SecurityMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+    @staticmethod
+    async def _send_closed(send: Send, path: str) -> None:
+        """The site is closed: a plain 404 with an empty body for pages (the browser shows its own "can't be found"
+        screen), and FastAPI's own 404 JSON for the API and files. no-store, so nothing is remembered once reopened."""
+        if path.startswith(API_PREFIXES):
+            body = json.dumps({"detail": CLOSED_DETAIL}, separators=(",", ":")).encode()  # byte for byte FastAPI's
+            headers = [(b"content-type", b"application/json")]
+        else:
+            body = b""
+            headers = []
+        headers += [(b"content-length", str(len(body)).encode()), (b"cache-control", b"no-store")]
+        await send({"type": "http.response.start", "status": CLOSED_STATUS, "headers": headers + SECURITY_HEADERS})
+        await send({"type": "http.response.body", "body": body})
 
 
 class RateLimiter:

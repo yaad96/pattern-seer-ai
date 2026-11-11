@@ -38,6 +38,22 @@ const BN = new Map(Object.entries({
   'Which panels to make': 'কোন কোন প্যানেল বানাবেন',
   'Choose any of them, or all three. With one panel, the picture you add is the reference for that panel.': 'যেকোনোটি বা তিনটিই বাছাই করুন। একটি প্যানেল বাছাই করলে আপনার দেওয়া ছবিটিই হবে সেই প্যানেলের রেফারেন্স।',
   'Choose at least one panel.': 'অন্তত একটি প্যানেল বাছাই করুন।',
+  // The Dashboard's site switch and its banner (2026-11-11).
+  'Site': 'সাইট',
+  'Open': 'চালু',
+  'Closed': 'বন্ধ',
+  'Open the site': 'সাইট চালু করুন',
+  'Close the site': 'সাইট বন্ধ করুন',
+  'Closing…': 'বন্ধ হচ্ছে…',
+  'Opening…': 'চালু হচ্ছে…',
+  'Only your studio login can use the site. Everyone else, the demo link included, gets a “page not found” (404) error, as if the site weren’t there.': 'শুধু আপনার স্টুডিও লগইন সাইট ব্যবহার করতে পারছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে, যেন সাইটটি নেই।',
+  'Everyone can use the site, the demo link included. Closing it shows them a “page not found” (404) error until you open it again here.': 'ডেমো লিংকসহ সবাই সাইট ব্যবহার করতে পারছে। বন্ধ করলে তারা “পেজ পাওয়া যায়নি” (404) এরর দেখবে, যতক্ষণ না আপনি এখানে আবার চালু করেন।',
+  'This switch controls this server only.': 'এই সুইচ শুধু এই সার্ভারের জন্য।',
+  'Close the site?': 'সাইট বন্ধ করবেন?',
+  'The demo link and everyone not signed in as studio will get a “page not found” (404) error until you open the site again here. Images being made right now still finish.': 'আপনি এখানে আবার চালু না করা পর্যন্ত ডেমো লিংক আর স্টুডিও লগইন ছাড়া সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখবে। এখন যে ছবিগুলো তৈরি হচ্ছে সেগুলো শেষ হবে।',
+  'The site is closed.': 'সাইট এখন বন্ধ।',
+  'The site is open again.': 'সাইট আবার চালু হয়েছে।',
+  'Only your studio login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.': 'শুধু আপনার স্টুডিও লগইন কাজ করছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে। আবার চালু করতে ড্যাশবোর্ডে যান।',
   // The Dashboard tab (dashboard.js, 2026-11-08).
   'Dashboard': 'ড্যাশবোর্ড',
   'Period': 'সময়কাল',
@@ -688,6 +704,7 @@ const PATTERNS = [
   [/^Recorded calls cost (\$[0-9.]+)$/, 'রেকর্ড হওয়া কলগুলোর খরচ $1'],
   [/^of which the AI designer (\$[0-9.]+)$/, 'এর মধ্যে এআই ডিজাইনার $1'],
   [/^(\d+) calls? of unknown cost$/, '$1টি কলের খরচ অজানা'],
+  [/^Since (.+)$/, '$1 থেকে'],  // the site switch: when it was last switched
   // the Dashboard tab's counts
   [/^(\d+) jobs?$/, '$1টি কাজ'],
   [/^(\d+) failed$/, '$1টি ব্যর্থ'],

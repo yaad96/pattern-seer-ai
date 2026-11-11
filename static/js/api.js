@@ -91,6 +91,12 @@ async function request(method, path, options) {
   const res = await send(path, init);
   if (res.status === 204) return null;
   const data = await readJson(res);
+  // The site was closed on the dashboard (app/site_switch.py): the server answers like a site that isn't there. An
+  // open client demo page reloads, so it shows the browser's own 404 screen too. Only there: the studio is never
+  // closed off, and the demo page calls no route that could be missing for any other reason.
+  if (res.status === 404 && data && data.detail === 'Not Found' && document.documentElement.dataset.app === 'customer') {
+    window.location.reload();
+  }
   if (!res.ok) throw new ApiError(errorMessage(res.status, data), res.status, data ? data.detail : undefined);
   if (data === null) throw new ApiError('Unexpected response from the server.', res.status);
   return data;
@@ -129,6 +135,17 @@ export const api = {
     return request('POST', '/api/prompt-preview', {
       json: { kind, options, message: message || '', input_ratio: inputRatio || null },
     });
+  },
+
+  /** GET /api/admin/site (studio login) -> {closed, since}: the dashboard's site switch. */
+  siteState() {
+    return request('GET', '/api/admin/site');
+  },
+
+  /** POST /api/admin/site {closed} -> {closed, since}: close the site (a plain 404 for everyone but the studio
+   * login) or open it again. */
+  setSiteClosed(closed) {
+    return request('POST', '/api/admin/site', { json: { closed: Boolean(closed) } });
   },
 
   /** GET /api/admin/usage?days= (studio login) -> {jobs: [...with their paid calls]} for the dashboard; 0 = all. */

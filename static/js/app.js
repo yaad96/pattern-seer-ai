@@ -53,6 +53,18 @@ function renderBanner(config) {
         ' file in the project folder and restart the app. (Claude cannot create images; a Claude key only powers the AI designer.)'))));
 }
 
+/** While the site is closed on the dashboard (app/site_switch.py), a reminder on the studio's pages: everyone else
+ * gets a "page not found" (404). Called again when the dashboard switches it. */
+function renderSiteBanner(closed) {
+  const old = document.getElementById('site-banner');
+  if (old) old.remove();
+  if (!closed) return;
+  document.getElementById('banner-slot').prepend(h('div', { class: 'banner is-closed', id: 'site-banner', role: 'status' },
+    h('div', { class: 'banner-inner' }, icon('alert'),
+      h('p', null, h('strong', null, 'The site is closed.'), ' ',
+        'Only your studio login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.'))));
+}
+
 function renderCustomerBanner(config) {
   if (!isDemo(config)) return;
   document.getElementById('banner-slot').appendChild(h('div', { class: 'banner', role: 'note' },
@@ -170,6 +182,7 @@ async function boot() {
   if (PANELS_PAGE) {
     try {
       renderStatus(config);
+      renderSiteBanner(config.site_closed);
       renderBanner(config);
       renderHeaderActions(config,
         [h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the studio page' }, icon('arrow-left'), 'Main page')]);
@@ -186,6 +199,7 @@ async function boot() {
   }
   try {
     renderStatus(config);
+    renderSiteBanner(config.site_closed);
     renderBanner(config);
     renderHeaderActions(config);
     const recreate = initRecreate(document.getElementById('panel-recreate'));
@@ -203,6 +217,7 @@ async function boot() {
     });
     const dashboardTab = initDashboard(document.getElementById('panel-dashboard'), {
       onOpenJob: (jobId) => historyTab.open(jobId),
+      onSiteChange: renderSiteBanner,
     });
     tabs = initTabs((name) => {
       if (name === 'history') historyTab.activate();
