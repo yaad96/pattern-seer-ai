@@ -128,6 +128,17 @@ const BN = new Map(Object.entries({
   'No tokens added yet.': 'এখনো কোনো টোকেন যোগ হয়নি।',
   'Balance after': 'এরপর বাকি',
   'Correction': 'সংশোধন',
+  // The jobs box (jobsbox.js, 2026-11-24): a job still being made after it left the Result area
+  'Jobs in the background': 'আর যেসব প্যানেল বানানো হচ্ছে', // the owner's words ("ar jeshob panel banano hocche")
+  'When it is ready you will find it in History.': 'রেডি হলে হিস্টোরিতে পাবেন।',
+  'You will find it in History.': 'হিস্টোরিতে পাবেন।',
+  'When it is ready you can show it here again.': 'রেডি হলে এখান থেকে আবার দেখতে পারবেন।',
+  'Ready.': 'রেডি।',
+  'Ready, but some images failed.': 'রেডি, তবে কিছু ছবি ব্যর্থ হয়েছে।',
+  'It could not be made.': 'এটি তৈরি করা যায়নি।',
+  'Open in History': 'হিস্টোরিতে দেখুন',
+  'Show the result': 'রেজাল্ট দেখুন',
+  'The earlier job is still being made. It is in the box at the bottom right.': 'আগের কাজটিও তৈরি হচ্ছে। নিচে ডান পাশের বক্সে দেখুন।',
   // History's tokens per job (history.js, 2026-11-24)
   'No tokens were taken for this job.': 'এই কাজে কোনো টোকেন কাটা হয়নি।',
   'The tokens are taken when the job ends, for each image that comes out.': 'কাজ শেষ হলে, যে ছবিগুলো তৈরি হয় সেগুলোর জন্য টোকেন কাটা হয়।',

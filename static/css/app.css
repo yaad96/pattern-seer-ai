@@ -463,8 +463,9 @@ a { color: var(--accent-text); }
 @keyframes shimmer { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
 
 .toasts {
-  /* above the downloads box when it shows (--downloads-h: its height, set by downloads.js) */
-  position: fixed; right: 16px; bottom: calc(16px + var(--downloads-h, 0px)); z-index: 200;
+  /* above the downloads box and the jobs box when they show (--downloads-h, --jobs-h: their heights, set by
+     downloads.js and jobsbox.js) */
+  position: fixed; right: 16px; bottom: calc(16px + var(--downloads-h, 0px) + var(--jobs-h, 0px)); z-index: 200;
   display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100vw - 32px)); pointer-events: none;
 }
 .toast {
@@ -1148,12 +1149,12 @@ a.token-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .buy-note { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--warning-soft); color: var(--text); font-size: 13px; }
 
 /* ---------- The downloads box (downloads.js, 2026-11-24): bottom right; each download's files being made, then 100% ---------- */
-.downloads {
+.downloads, .jobsbox {
   position: fixed; right: 16px; bottom: 16px; z-index: 190; width: min(380px, calc(100vw - 32px));
   display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-radius: var(--radius-l);
   background: var(--surface); color: var(--text); box-shadow: var(--shadow-3); font-size: 13px; text-align: left;
 }
-.downloads[hidden] { display: none; }
+.downloads[hidden], .jobsbox[hidden] { display: none; }
 .downloads-head {
   display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--border); font-weight: 700;
@@ -1176,3 +1177,19 @@ a.token-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .downloads-actions { display: inline-flex; flex: none; align-items: center; gap: 4px; }
 .downloads-item.is-failed .downloads-status { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .downloads-fill { transition: none; } }
+
+/* ---------- The jobs box (jobsbox.js, 2026-11-24): a job still being made after it left the Result area. It looks
+   like the downloads box and sits above it; its coloured head makes it hard to miss ---------- */
+.jobsbox { bottom: calc(16px + var(--downloads-h, 0px)); z-index: 191; border-color: var(--accent); font-size: 13.5px; }
+.jobsbox .downloads-head { border-radius: var(--radius-l) var(--radius-l) 0 0; background: var(--accent-soft); color: var(--accent-text); font-size: 14px; }
+.jobsbox .downloads-head .spinner { color: var(--accent); }
+.jobsbox .downloads-head .icon { color: var(--success); }
+.jobsbox .downloads-status { color: var(--text); font-weight: 600; }
+.jobsbox .downloads-item.is-failed .downloads-status { color: var(--danger); }
+.jobsbox-hint { margin: 0; color: var(--text-2); }
+.jobsbox-item { flex-direction: row; align-items: flex-start; gap: 12px; }
+.jobsbox-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.jobsbox-thumb { flex: none; width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--surface-3); }
+.jobsbox-thumb[hidden], .jobsbox-hint[hidden] { display: none; }
+.jobsbox .downloads-foot { min-height: 0; }
+.jobsbox-actions { display: flex; justify-content: space-between; margin-top: 2px; }

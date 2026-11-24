@@ -267,7 +267,7 @@ function stepCard(step, title, children) {
  * serves that page (config.panels_page), and builds its panel row hidden. client: a client page (/client_<name>):
  * what the job needs from the client's purse of our tokens (tokens.js), and Generate stays off when it can't cover it
  * (the server refuses such a job too). */
-export function initRecreate(root, { customer = false, staff = false, keyPrefix = 'customer', client = '' } = {}) {
+export function initRecreate(root, { customer = false, staff = false, keyPrefix = 'customer', client = '', jobsBox = null } = {}) {
   const config = getConfig();
   const defaults = config.defaults.recreate;
   const maxMb = config.limits.max_upload_mb;
@@ -736,6 +736,11 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     storage.remove(PRESS_KEY); // answered: the next press is a new one
     if (client) refreshPurse(); // the job's price is now held
     setBusy(generateBtn, true, 'Generating…');
+    // the job shown until now may still be being made (after a reload the button is free while it runs; so it is
+    // while a failed image is generated again): it goes on in the jobs box, and this one takes the Result area
+    if (leaveToBackground(current) && isActive(current.status)) {
+      toast('The earlier job is still being made. It is in the box at the bottom right.', { kind: 'info' });
+    }
     storage.set(LAST_JOB_KEY, res.job_id);
     showJob(res.job_id, true);
     if (window.matchMedia('(max-width: 960px)').matches) resultsCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -770,8 +775,18 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     current = null;
   }
 
+  /** `view`'s job leaves the Result area: when it is, or may be, still being made, the jobs box (jobsbox.js)
+   * takes it over. True when it was handed over. */
+  function leaveToBackground(view) {
+    if (!jobsBox || !view || view.gone) return false;
+    if (view.status !== undefined && !isActive(view.status)) return false; // it has ended: nothing is under way
+    jobsBox.track(view.jobId, { active: isActive(view.status) });
+    return true;
+  }
+
   function dismiss() {
     if (current) release(current);
+    leaveToBackground(current); // "Clear" while it is being made: the server goes on, the jobs box shows it
     stopCurrent();
     storage.remove(LAST_JOB_KEY);
     renderEmpty();
@@ -779,8 +794,9 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
 
   function showJob(jobId, fresh) {
     stopCurrent();
+    if (jobsBox) jobsBox.drop(jobId); // it is the Result area's job (again)
     const view = {
-      jobId, fresh, sig: '', results: null, unwatch: null,
+      jobId, fresh, sig: '', results: null, unwatch: null, status: undefined, gone: false,
       progress: createProgress({ stageText: forClient ? withoutModel : null }),
       badge: h('span'),
       time: h('span', { class: 'muted' }),
@@ -820,6 +836,7 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     if (view !== current) return;
     if (!job) {
       if (meta.gone) {
+        view.gone = true;
         release(view);
         storage.remove(LAST_JOB_KEY);
         view.progress.stop();
@@ -830,6 +847,7 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
       }
       return;
     }
+    view.status = job.status;
     replace(view.badge, statusBadge(job.status));
     view.time.textContent = fmtRelative(job.created_at);
     view.time.title = fmtDateTime(job.created_at);
@@ -900,6 +918,15 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     forgetJob(jobId) {
       if (current && current.jobId === jobId) dismiss();
       else if (storage.get(LAST_JOB_KEY, null) === jobId) storage.remove(LAST_JOB_KEY);
+    },
+    /** Show a job in the Result area (the jobs box's button on a page without a History tab); the one shown until
+     * now goes to the jobs box when it is still being made. */
+    show(jobId) {
+      if (current && current.jobId === jobId) return;
+      leaveToBackground(current);
+      if (current) release(current);
+      storage.set(LAST_JOB_KEY, jobId);
+      showJob(jobId, false);
     },
   };
 }

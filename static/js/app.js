@@ -7,9 +7,11 @@ import { loadConfig } from './api.js';
 import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
 import { initDesign } from './design.js';
 import { initHistory } from './history.js';
+import { initJobsBox } from './jobsbox.js';
 import { initCustomerBoard } from './customerboard.js';
 import { initRecreate } from './recreate.js';
-import { purseChip, startPurse } from './tokens.js';
+import { withoutModel } from './results.js';
+import { purseChip, refreshPurse, startPurse } from './tokens.js';
 import { callout } from './ui.js';
 
 const TABS = ['recreate', 'design', 'history'];
@@ -179,13 +181,35 @@ async function boot() {
       renderCustomerBanner(config);
       startPurse(CLIENT); // a client page: its purse of our tokens (nothing elsewhere)
       renderHeaderActions(config, CLIENT ? [purseChip({ href: '#tokens' })] : []);
-      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: KEY, client: CLIENT });
+      let tabs = null;
+      let recreate = null;
+      let historyTab = null;
+      // a job still being made after it left the Result area (jobsbox.js): a client page opens it in its History;
+      // /customerep and /experiment have no History, so there it is shown in the Result area again
+      const jobsBox = initJobsBox({
+        key: `${KEY}.bgJobs`,
+        history: Boolean(CLIENT),
+        stageText: withoutModel,
+        openJob: (jobId) => {
+          if (historyTab) {
+            tabs.select('history', false);
+            historyTab.open(jobId);
+          } else {
+            tabs.select('recreate', false);
+            recreate.show(jobId);
+          }
+        },
+        onEnded: () => {
+          if (CLIENT) refreshPurse(); // charged now: each image that came out
+          if (historyTab && tabs && tabs.current() === 'history') historyTab.activate();
+        },
+      });
+      recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: KEY, client: CLIENT, jobsBox });
       const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: KEY, client: CLIENT });
       // a client page also has its own History (history.js, the jobs that client made; since 2026-11-24) and its
       // "Customer dashboard" (customerboard.js); /customerep and /experiment have neither
       const board = CLIENT ? initCustomerBoard(document.getElementById('panel-tokens'), { client: CLIENT }) : null;
-      let tabs = null;
-      const historyTab = CLIENT ? initHistory(document.getElementById('panel-history'), {
+      historyTab = CLIENT ? initHistory(document.getElementById('panel-history'), {
         scope: 'customer',
         client: CLIENT,
         onContinue: (job) => {
@@ -215,9 +239,18 @@ async function boot() {
       renderBanner(config);
       renderHeaderActions(config,
         [h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the main page' }, icon('arrow-left'), 'Main page')]);
-      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, staff: true, keyPrefix: MODE });
+      let tabs = null;
+      let recreate = null;
+      const jobsBox = initJobsBox({ // no History tab here: a background job is shown in the Result area again
+        key: `${MODE}.bgJobs`,
+        openJob: (jobId) => {
+          tabs.select('recreate', false);
+          recreate.show(jobId);
+        },
+      });
+      recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, staff: true, keyPrefix: MODE, jobsBox });
       const design = initDesign(document.getElementById('panel-design'), { keyPrefix: MODE });
-      const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab (it is on the studio page)
+      tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab (it is on the studio page)
       wireGlobalInput(tabs, recreate, design);
       bootEl.remove();
     } catch (err) {
@@ -236,10 +269,22 @@ async function boot() {
     renderBanner(config);
     renderHeaderActions(config,
       [h('a', { class: 'btn btn-sm btn-ghost', href: '/supreme-dashboard' }, icon('chart'), 'Supreme dashboard')]);
-    const recreate = initRecreate(document.getElementById('panel-recreate'));
-    const design = initDesign(document.getElementById('panel-design'));
     let tabs = null;
-    const historyTab = initHistory(document.getElementById('panel-history'), {
+    let historyTab = null;
+    const jobsBox = initJobsBox({
+      key: 'recreate.bgJobs',
+      history: true,
+      openJob: (jobId) => {
+        tabs.select('history', false);
+        historyTab.open(jobId);
+      },
+      onEnded: () => {
+        if (historyTab && tabs && tabs.current() === 'history') historyTab.activate();
+      },
+    });
+    const recreate = initRecreate(document.getElementById('panel-recreate'), { jobsBox });
+    const design = initDesign(document.getElementById('panel-design'));
+    historyTab = initHistory(document.getElementById('panel-history'), {
       onContinue: (job) => {
         tabs.select('design', false);
         design.continueFrom(job);
