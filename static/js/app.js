@@ -5,7 +5,6 @@
 import './i18n.js';
 import { loadConfig } from './api.js';
 import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
-import { initDashboard } from './dashboard.js';
 import { initDesign } from './design.js';
 import { initHistory } from './history.js';
 import { initCustomerBoard } from './customerboard.js';
@@ -13,7 +12,9 @@ import { initRecreate } from './recreate.js';
 import { purseChip, startPurse } from './tokens.js';
 import { callout } from './ui.js';
 
-const TABS = ['recreate', 'design', 'history', 'dashboard']; // the dashboard only on the studio page
+const TABS = ['recreate', 'design', 'history'];
+// The head admin's dashboard is its own page since 2026-11-24, /supreme-dashboard (supremeboard.js), linked from
+// the header here; it was this page's fourth tab, #dashboard, which still leads there.
 // /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
 // Design, without the History tab, the model status, the output settings, costs or prompts.
 // /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
@@ -70,7 +71,7 @@ function renderSiteBanner(closed) {
   document.getElementById('banner-slot').prepend(h('div', { class: 'banner is-closed', id: 'site-banner', role: 'status' },
     h('div', { class: 'banner-inner' }, icon('alert'),
       h('p', null, h('strong', null, 'The site is closed.'), ' ',
-        'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.'))));
+        'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Supreme dashboard, under Settings.'))));
 }
 
 function renderCustomerBanner(config) {
@@ -211,11 +212,16 @@ async function boot() {
     }
     return;
   }
+  // the Dashboard tab's old address, opened afresh or typed into the open page
+  const toSupreme = () => window.location.hash === '#dashboard' && (window.location.replace('/supreme-dashboard'), true);
+  if (toSupreme()) return;
+  window.addEventListener('hashchange', toSupreme);
   try {
     renderStatus(config);
     renderSiteBanner(config.site_closed);
     renderBanner(config);
-    renderHeaderActions(config);
+    renderHeaderActions(config,
+      [h('a', { class: 'btn btn-sm btn-ghost', href: '/supreme-dashboard' }, icon('chart'), 'Supreme dashboard')]);
     const recreate = initRecreate(document.getElementById('panel-recreate'));
     const design = initDesign(document.getElementById('panel-design'));
     let tabs = null;
@@ -229,14 +235,16 @@ async function boot() {
         recreate.forgetJob(jobId);
       },
     });
-    const dashboardTab = initDashboard(document.getElementById('panel-dashboard'), {
-      onOpenJob: (jobId) => historyTab.open(jobId),
-      onSiteChange: renderSiteBanner,
-    });
     tabs = initTabs((name) => {
       if (name === 'history') historyTab.activate();
-      if (name === 'dashboard') dashboardTab.activate();
     });
+    // the Supreme dashboard's "Details" on a job: /?job=<id>#history opens that job here
+    const wanted = new URLSearchParams(window.location.search).get('job');
+    if (wanted && /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/.test(wanted)) {
+      window.history.replaceState(null, '', '/#history');
+      tabs.select('history', false);
+      historyTab.open(wanted);
+    }
     wireGlobalInput(tabs, recreate, design);
     bootEl.remove();
   } catch (err) {

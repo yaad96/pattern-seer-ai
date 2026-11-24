@@ -55,7 +55,8 @@ const BN = new Map(Object.entries({
   'The demo link and everyone not signed in as the head admin will get a “page not found” (404) error until you open the site again here. Images being made right now still finish.': 'আপনি এখানে আবার চালু না করা পর্যন্ত ডেমো লিংক আর হেড অ্যাডমিন লগইন ছাড়া সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখবে। এখন যে ছবিগুলো তৈরি হচ্ছে সেগুলো শেষ হবে।',
   'The site is closed.': 'সাইট এখন বন্ধ।',
   'The site is open again.': 'সাইট আবার চালু হয়েছে।',
-  'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.': 'শুধু আপনার হেড অ্যাডমিন লগইন কাজ করছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে। আবার চালু করতে ড্যাশবোর্ডে যান।',
+  'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Supreme dashboard, under Settings.': 'শুধু আপনার হেড অ্যাডমিন লগইন কাজ করছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে। আবার চালু করতে সুপ্রিম ড্যাশবোর্ডের সেটিংসে যান।',
+  'Supreme dashboard': 'সুপ্রিম ড্যাশবোর্ড',  // the main page's link to /supreme-dashboard (2026-11-24)
   // The Dashboard tab (dashboard.js, 2026-11-08).
   'Dashboard': 'ড্যাশবোর্ড',
   'Period': 'সময়কাল',
@@ -127,6 +128,39 @@ const BN = new Map(Object.entries({
   'No tokens added yet.': 'এখনো কোনো টোকেন যোগ হয়নি।',
   'Balance after': 'এরপর বাকি',
   'Correction': 'সংশোধন',
+  // "Buy tokens" with bKash, checked by hand (customerboard.js, app/payments.py; 2026-11-24). The note under the
+  // form is the owner's own sentence; the other texts follow its words (ভেরিফাই, অ্যাড) and the approved drawing.
+  'Package': 'প্যাকেজ',
+  '1. Choose a package': '১. প্যাকেজ বাছাই করুন',
+  '2. Send the money with bKash': '২. bKash-এ টাকা পাঠান',
+  'Use Send Money in the bKash app, to this number': 'bKash অ্যাপ থেকে Send Money করে এই নম্বরে পাঠান',
+  'Amount:': 'পরিমাণ:',
+  'Copy the number': 'নম্বর কপি',
+  'The number was copied.': 'নম্বর কপি হয়েছে।',
+  '3. Type the TrxID bKash gave you': '৩. bKash যে TrxID দিয়েছে তা লিখুন',
+  'The bKash number you paid from': 'যে bKash নম্বর থেকে পাঠিয়েছেন',
+  'Your tokens are added as soon as your TrxID is verified. Verification can take up to 24 hours.': 'আপনার TrxID ভেরিফাই হওয়ার সাথে সাথে টোকেন অ্যাড হয়ে যাবে। ভেরিফিকেশনে সর্বোচ্চ ২৪ ঘণ্টা লাগতে পারে।',
+  'Send payment': 'পেমেন্ট জমা দিন',
+  'Enter the TrxID exactly as bKash shows it: 8 to 16 letters and digits.': 'bKash যেভাবে দেখায় ঠিক সেভাবে TrxID লিখুন: ৮ থেকে ১৬টি অক্ষর ও সংখ্যা।',
+  'Enter the bKash number you paid from as 11 digits, like 01XXXXXXXXX.': 'যে bKash নম্বর থেকে পাঠিয়েছেন তা ১১ সংখ্যায় লিখুন, যেমন 01XXXXXXXXX।',
+  'Payment sent. Your tokens are added as soon as your TrxID is verified.': 'পেমেন্ট জমা হয়েছে। আপনার TrxID ভেরিফাই হওয়ার সাথে সাথে টোকেন অ্যাড হয়ে যাবে।',
+  'Cannot reach the server. Check your internet and press Send payment again: it can’t be recorded twice.': 'সার্ভারে পৌঁছানো যাচ্ছে না। ইন্টারনেট সংযোগ দেখে আবার “পেমেন্ট জমা দিন” চাপুন: পেমেন্ট দুবার রেকর্ড হবে না।',
+  'Only the client’s own login can send a payment. You can add tokens on the Partner dashboard.': 'শুধু ক্লায়েন্টের নিজের লগইন থেকে পেমেন্ট জমা দেওয়া যায়। আপনি পার্টনার ড্যাশবোর্ডে টোকেন অ্যাড করতে পারেন।',
+  "Only a client's own login can send a payment.": 'শুধু ক্লায়েন্টের নিজের লগইন থেকে পেমেন্ট জমা দেওয়া যায়।',
+  'bKash payments': 'bKash পেমেন্ট',
+  'Waiting for verification': 'ভেরিফিকেশনের অপেক্ষায়',
+  'Your tokens are added as soon as it is verified.': 'ভেরিফাই হওয়ার সাথে সাথে টোকেন অ্যাড হয়ে যাবে।',
+  'Verified · tokens added': 'ভেরিফায়েড · টোকেন অ্যাড হয়েছে',
+  'Rejected': 'রিজেক্টেড',
+  'Reason:': 'কারণ:',
+  'This TrxID was not found in bKash. Check the TrxID and send it again.': 'এই TrxID bKash-এ পাওয়া যায়নি। TrxID মিলিয়ে আবার জমা দিন।',
+  'The amount does not match the package. Please contact the head admin.': 'টাকার পরিমাণ প্যাকেজের সাথে মেলেনি। হেড অ্যাডমিনের সাথে যোগাযোগ করুন।',
+  'This TrxID was already used.': 'এই TrxID আগেই ব্যবহার হয়েছে।',
+  'This form was already used. Reload the page and try again.': 'এই ফর্মটি আগেই ব্যবহার হয়েছে। পেজ রিলোড করে আবার চেষ্টা করুন।',
+  "Tokens can't be bought here right now. Please contact the head admin.": 'এখন এখানে টোকেন কেনা যাচ্ছে না। হেড অ্যাডমিনের সাথে যোগাযোগ করুন।',
+  'That package is no longer offered. Reload the page and choose again.': 'এই প্যাকেজটি আর নেই। পেজ রিলোড করে আবার বাছাই করুন।',
+  'This TrxID was already sent. One TrxID can be used once.': 'এই TrxID আগেই জমা দেওয়া হয়েছে। একটি TrxID একবারই ব্যবহার করা যায়।',
+  'Too many payments were sent today. Please contact the head admin.': 'আজ অনেক বেশি পেমেন্ট জমা দেওয়া হয়েছে। হেড অ্যাডমিনের সাথে যোগাযোগ করুন।',
   'Picture': 'ছবি',
   'What was made': 'কী বানানো হয়েছে',
   'View the picture larger': 'ছবিটি বড় করে দেখুন',
@@ -193,15 +227,29 @@ const BN = new Map(Object.entries({
   'Print size, 300 dpi (default)': 'প্রিন্ট সাইজ, 300 dpi (ডিফল্ট)',
   'Original size (as the AI made it)': 'অরিজিনাল সাইজ (এআই যেমন বানিয়েছে)',
   'Print size: every panel at its 3XL print size at 300 dpi (big files). Original size: the images exactly as the AI made them.': 'প্রিন্ট সাইজ: প্রতিটি প্যানেল তার 3XL প্রিন্ট সাইজে, 300 dpi-তে (বড় ফাইল)। অরিজিনাল সাইজ: এআই যেমন বানিয়েছে হুবহু সেই ছবি।',
-  'Making the raster EPS files and the ZIP…': 'র‍্যাস্টার EPS ফাইল আর জিপ তৈরি হচ্ছে…',
-  'Making the print-size PNGs and the ZIP…': 'প্রিন্ট সাইজের PNG আর জিপ তৈরি হচ্ছে…',
-  'Making the ZIP…': 'জিপ তৈরি হচ্ছে…',
-  'Making the ZIP. This can take a little while…': 'জিপ তৈরি হচ্ছে। একটু সময় লাগতে পারে…',
   "A panel's PNG file is missing on disk.": 'একটি প্যানেলের PNG ফাইল ডিস্কে নেই।',
   'Turns on when all panels are generated.': 'সব প্যানেল জেনারেট হলে চালু হবে।',
-  'Tracing the panels and making the ZIP…': 'প্যানেলগুলো ট্রেস করে জিপ তৈরি হচ্ছে…',
-  'Tracing the panels for the ZIP. This can take a little while…': 'জিপের জন্য প্যানেলগুলো ট্রেস হচ্ছে। একটু সময় লাগতে পারে…',
-  'The ZIP is downloading.': 'জিপ ডাউনলোড হচ্ছে।',
+  // The downloads box at the bottom right (downloads.js, 2026-11-24). The toast and the clear button are the
+  // owner's own words; the rest follows the drawings the owner approved.
+  'Downloads': 'ডাউনলোড',
+  'Download started. At 100% the file is saved on your computer.': 'ডাউনলোড শুরু হয়েছে। 100% হলে ফাইলটি আপনার কম্পিউটারে সেভ হবে।',
+  'Clear the downloaded ones': 'অলরেডি ডাউনলোডেডগুলো সরান',
+  'Download again': 'আবার ডাউনলোড',
+  'This download is already in the box at the bottom right.': 'এই ডাউনলোডটি নিচের ডান পাশের বক্সে আগে থেকেই আছে।',
+  'Waiting: it starts when the one before it is done': 'অপেক্ষায় আছে: আগেরটি শেষ হলে শুরু হবে',
+  'Cannot reach the server. Trying again…': 'সার্ভারে পৌঁছানো যাচ্ছে না। আবার চেষ্টা হচ্ছে…',
+  'Ready. The file went to your browser’s downloads.': 'রেডি। ফাইলটি আপনার ব্রাউজারের ডাউনলোডে গেছে।',
+  'The file could not be made. Please try again.': 'তৈরি করা যায়নি। আবার চেষ্টা করুন।',
+  'The server restarted while the file was being made. Please try again.': 'ফাইল তৈরির সময় সার্ভার রিস্টার্ট হয়েছে। আবার চেষ্টা করুন।',
+  'This download is not known here. Start it again.': 'এই ডাউনলোডটি সার্ভারে পাওয়া যায়নি। আবার শুরু করুন।',
+  'Putting the ZIP together…': 'জিপ ফাইল তৈরি হচ্ছে…',
+  'Making the print-size PNG…': 'প্রিন্ট সাইজের PNG তৈরি হচ্ছে…',
+  'All panels: EPS (detailed)': 'সব প্যানেলের EPS (ডিটেইলড)',
+  'All panels: EPS (standard)': 'সব প্যানেলের EPS (স্ট্যান্ডার্ড)',
+  'All panels: EPS (flat)': 'সব প্যানেলের EPS (ফ্ল্যাট)',
+  'All panels: EPS (raster)': 'সব প্যানেলের EPS (র‍্যাস্টার)',
+  'All panels: PNG (print size)': 'সব প্যানেলের PNG (প্রিন্ট সাইজ)',
+  'All panels: PNG (original size)': 'সব প্যানেলের PNG (অরিজিনাল সাইজ)',
   'Not all panels are ready yet.': 'সব প্যানেল এখনো তৈরি হয়নি।',
   'This job has no production panels.': 'এই জবে কোনো প্রোডাকশন প্যানেল নেই।',
   "A panel's EPS file is missing on disk.": 'একটি প্যানেলের EPS ফাইল ডিস্কে নেই।',
@@ -667,6 +715,13 @@ function withModel(text) {
   return m ? `${lookup(m[1]) || m[1]} ${m[2]}` : text;
 }
 
+// The downloads box: a ZIP's or an export's preset, and the part whose file is being made.
+const BOX_PRESETS = { detailed: 'ডিটেইলড', standard: 'স্ট্যান্ডার্ড', flat: 'ফ্ল্যাট', raster: 'র‍্যাস্টার' };
+const BOX_PARTS = {
+  front: 'ফ্রন্টের', back: 'ব্যাকের', sleeve: 'স্লিভের', 'left sleeve': 'বাম স্লিভের', 'right sleeve': 'ডান স্লিভের',
+  collar: 'কলারের', image: 'ছবির',
+};
+
 /* Text with numbers or names in it: [English pattern, Bangla replacement (string or function)]. */
 const PATTERNS = [
   [/^AI designer: (.+)$/, (_, w) => `এআই ডিজাইনার: ${w === 'off' ? 'বন্ধ' : withModel(w)}`],
@@ -745,7 +800,19 @@ const PATTERNS = [
   [/^Generation failed: (.*)$/, (_, why) => `তৈরি করা ব্যর্থ: ${tr(why)}`],
   [/^The design failed\.(.*)$/, 'ডিজাইনটি ব্যর্থ হয়েছে।$1'],
   [/^Export failed: (.*)$/, (_, why) => `এক্সপোর্ট ব্যর্থ: ${lookup(why) || why}`],
-  [/^ZIP download failed: (.*)$/, (_, why) => `জিপ ডাউনলোড ব্যর্থ: ${lookup(why) || why}`],
+  // the downloads box (downloads.js): "Front panel: PNG", "Sleeve panel: EPS (detailed)", "Making the back EPS (2/4)"
+  [new RegExp(`^${TITLE}: (PNG|EPS|SVG|PDF)(?: \\((detailed|standard|flat|raster)\\))?$`), (_, title, type, preset) => {
+    const name = cardTitle(title);
+    return `${name}${/[0-9০-৯]$/.test(name) ? '-এর' : 'ের'} ${type}${preset ? ` (${BOX_PRESETS[preset]})` : ''}`;
+  }],
+  [/^Making the (front|back|sleeve|left sleeve|right sleeve|collar|image) (PNG|EPS) \((\d+)\/(\d+)\)$/,
+    (_, part, type, n, of) => `${BOX_PARTS[part]} ${type} তৈরি হচ্ছে (${n}/${of})`],
+  [/^Download failed: (.*)$/, (_, why) => `ডাউনলোড ব্যর্থ: ${tr(why)}`],
+  // Buy tokens (customerboard.js) and the server's answers to it (app/payments.py)
+  [new RegExp(`^${NUM} tokens$`), '$1 টোকেন'],
+  [new RegExp(`^About ${NUM} full sets$`), 'প্রায় $1টি ফুল সেট (নিজস্ব ব্যাকসহ)'],
+  [new RegExp(`^${NUM} payments of yours are waiting to be checked\\. Please wait for those first\\.$`),
+    'আপনার $1টি পেমেন্ট ভেরিফিকেশনের অপেক্ষায় আছে। আগে সেগুলো শেষ হতে দিন।'],
   [/^Total cost (\$[0-9.]+)$/, 'মোট খরচ $1'],
   [/^Recorded calls cost (\$[0-9.]+)$/, 'রেকর্ড হওয়া কলগুলোর খরচ $1'],
   [/^of which the AI designer (\$[0-9.]+)$/, 'এর মধ্যে এআই ডিজাইনার $1'],

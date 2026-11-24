@@ -60,6 +60,13 @@ export function fileUrl(jobId, filename, download) {
   return `${FILES}/${seg(jobId)}/${seg(filename)}${download ? '?download=1' : ''}`;
 }
 
+/** URL of a panel job's ZIP, which the browser downloads itself once the downloads box has its files ready
+ * (downloads.js): every panel's EPS at one preset (kind 'eps': GET .../panels-eps.zip?preset=), or every panel's PNG
+ * at the print or the original size (kind 'png': GET .../panels-png.zip?size=). */
+export function zipUrl(jobId, kind, value) {
+  return `/api/jobs/${seg(jobId)}/panels-${kind}.zip?${kind === 'eps' ? 'preset' : 'size'}=${seg(value)}`;
+}
+
 function describeDetail(detail) {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {
@@ -199,7 +206,8 @@ export const api = {
     return request('GET', `/api/tokens/mine${client ? `?client=${encodeURIComponent(client)}` : ''}`);
   },
 
-  /** GET /api/tokens/clients?days= (studio, partner) -> {enabled, can_add, prices, clients: [...]}. */
+  /** GET /api/tokens/clients?days= (head admin, partner) -> {enabled, can_add, can_take_back, role, waiting, prices,
+   * clients: [...]}. */
   tokenClients(days) {
     return request('GET', `/api/tokens/clients?days=${encodeURIComponent(String(days))}`);
   },
@@ -215,6 +223,71 @@ export const api = {
   addTokens(slug, tokens, note, taka = null, requestId = null) {
     return request('POST', `/api/tokens/clients/${seg(slug)}/topup`,
       { json: { tokens, note, taka, request_id: requestId } });
+  },
+
+  /** GET /api/tokens/jobs?days=&client= (head admin, partner) -> {jobs: [...every client's jobs with their tokens]}. */
+  tokenJobs(days, client) {
+    const q = new URLSearchParams({ days: String(days) });
+    if (client) q.set('client', client);
+    return request('GET', `/api/tokens/jobs?${q}`);
+  },
+
+  /** GET /api/tokens/topups?days= (head admin, partner) -> {topups: [...tokens added or taken back by hand]}. */
+  tokenTopups(days) {
+    return request('GET', `/api/tokens/topups?days=${encodeURIComponent(String(days))}`);
+  },
+
+  /** GET /api/pay/requests (head admin, partner) -> {payments: [...bKash payments, newest first], waiting, role, …}. */
+  payRequests() {
+    return request('GET', '/api/pay/requests');
+  },
+
+  /** POST /api/pay/requests/{id}/approve -> {payment, balance}: the money was seen in bKash; the tokens are added. */
+  payApprove(id) {
+    return request('POST', `/api/pay/requests/${seg(id)}/approve`);
+  },
+
+  /** POST /api/pay/requests/{id}/reject {reason, text} -> {payment}. reason: not_found | amount | used | other. */
+  payReject(id, reason, text = '') {
+    return request('POST', `/api/pay/requests/${seg(id)}/reject`, { json: { reason, text } });
+  },
+
+  /** GET /api/pay/settings (head admin) -> {number, packages, enabled, …}: where clients pay and what they can buy. */
+  paySettings() {
+    return request('GET', '/api/pay/settings');
+  },
+
+  /** POST /api/pay/settings {number, packages: [{tokens, taka}]} (head admin) -> the saved settings. */
+  savePaySettings(number, packages) {
+    return request('POST', '/api/pay/settings', { json: { number, packages } });
+  },
+
+  /** POST /api/pay/requests {tokens, trx, sender, request_id} (a client's own login) -> {payment, repeated}: the
+   * client paid for the package of `tokens` tokens with bKash; the payment waits to be checked. */
+  buyTokens(tokens, trx, sender, requestId) {
+    return request('POST', '/api/pay/requests', { json: { tokens, trx, sender, request_id: requestId } });
+  },
+
+  /** GET /api/admin/sheet-script -> {script, version}: the Apps Script for the Google Sheet, with this machine's
+   * secret in it (the head admin; the Supreme dashboard's Settings copies it for pasting into the sheet). */
+  sheetScript() {
+    return request('GET', '/api/admin/sheet-script');
+  },
+
+  /** POST /api/admin/sheet-check -> the sheet log's status after asking the sheet's script which version it is. */
+  sheetCheck() {
+    return request('POST', '/api/admin/sheet-check');
+  },
+
+  /** POST /api/jobs/{id}/downloads {kind, variant, preset, size} -> {key, done, total, label, ready, error}: make a
+   * download's files ready (the downloads box). kind: png | export | eps-zip | png-zip. */
+  startDownload(jobId, what) {
+    return request('POST', `${JOBS_API}/${seg(jobId)}/downloads`, { json: what });
+  },
+
+  /** GET /api/jobs/{id}/downloads?key= -> the same, as it stands now (404: the server restarted; start it again). */
+  downloadState(jobId, key) {
+    return request('GET', `${JOBS_API}/${seg(jobId)}/downloads?key=${encodeURIComponent(key)}`);
   },
 
   /** GET /api/jobs -> JobSummary[] (newest first). */
@@ -250,23 +323,4 @@ export const api = {
     return request('POST', `${JOBS_API}/${seg(jobId)}/variants/${seg(index)}/retry`);
   },
 
-  /** GET .../{job_id}/panels-eps.zip?preset= -> {blob, filename}: every panel's EPS at one preset, in one ZIP. */
-  panelsZip(jobId, preset) {
-    return zipFile(`${JOBS_API}/${seg(jobId)}/panels-eps.zip?preset=${seg(preset)}`, `jersey-${jobId}-panels-eps-${preset}.zip`);
-  },
-
-  /** GET .../{job_id}/panels-png.zip?size=print|original -> {blob, filename}: every panel's PNG in one ZIP. */
-  panelsPngZip(jobId, size) {
-    return zipFile(`${JOBS_API}/${seg(jobId)}/panels-png.zip?size=${seg(size)}`, `jersey-${jobId}-panels-png-${size}.zip`);
-  },
 };
-
-async function zipFile(url, fallbackName) {
-  const res = await send(url, { credentials: 'same-origin' });
-  if (!res.ok) {
-    const data = await readJson(res);
-    throw new ApiError(errorMessage(res.status, data), res.status, data ? data.detail : undefined);
-  }
-  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
-  return { blob: await res.blob(), filename: match ? match[1] : fallbackName };
-}

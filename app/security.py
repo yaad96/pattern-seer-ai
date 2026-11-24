@@ -88,7 +88,7 @@ def valid_session(settings: Settings, token: str) -> bool:
 
 
 def session_role(settings: Settings, token: str, logins: tuple[ClientLogin, ...] = ()) -> str | None:
-    """'full' (the studio login), 'demo' (the demo login: /customerep only), 'partner' (the client dashboard only),
+    """'full' (the studio login), 'demo' (the demo login: /customerep only), 'partner' (the Partner dashboard only),
     'client:<slug>' (a client login: its own page only) or None (not signed in)."""
     if _signed(settings, token, "full"):
         return "full"
@@ -138,11 +138,14 @@ PAGE_ROUTES = (
     ("GET", re.compile(r"/api/config")),
     ("GET", re.compile(r"/api/tokens/balance")),  # a client page's purse (the demo login just gets "no purse")
     ("GET", re.compile(r"/api/tokens/mine")),  # a client page's "Customer dashboard" tab (likewise)
+    ("POST", re.compile(r"/api/pay/requests")),  # "Buy tokens" there: a bKash payment to be checked (client logins)
     ("POST", re.compile(r"/api/recreate")),
     ("POST", re.compile(r"/api/design")),
     ("GET", re.compile(r"/api/jobs/[^/]+")),
     ("POST", re.compile(r"/api/jobs/[^/]+/variants/\d+/(vectorize|retry)")),
     ("GET", re.compile(r"/api/jobs/[^/]+/panels-(eps|png)\.zip")),
+    ("POST", re.compile(r"/api/jobs/[^/]+/downloads")),  # the downloads box: make a download's files, and how far
+    ("GET", re.compile(r"/api/jobs/[^/]+/downloads")),
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
 # What the demo login may reach: the demo page /customerep and what it calls (not the client pages).
@@ -163,13 +166,20 @@ def demo_allows(method: str, path: str) -> bool:
     return _allows(DEMO_ROUTES, method, path)
 
 
-# What the partner login may reach (2026-11-23): the client dashboard, its read-only data, and the preview pictures of
-# client jobs (main.py's files route allows only previews of jobs made with a client login).
+# What the partner login may reach: the Partner dashboard (2026-11-23; /client-dashboard is its old address), its data,
+# and the preview pictures of client jobs (main.py's files route allows only previews of jobs made with a client
+# login). Since 2026-11-24 it also checks bKash payments and adds tokens (it can't take tokens back: the route says so).
+PARTNER_PAGE = "/partner-dashboard"
 PARTNER_ROUTES = (
-    ("GET", re.compile(r"/client-dashboard/?")),
+    ("GET", re.compile(r"/(partner|client)-dashboard/?")),
     ("GET", re.compile(r"/static/.+")),
     ("GET", re.compile(r"/api/tokens/clients")),
     ("GET", re.compile(r"/api/tokens/clients/[a-z0-9]+")),
+    ("POST", re.compile(r"/api/tokens/clients/[a-z0-9]+/topup")),
+    ("GET", re.compile(r"/api/tokens/jobs")),
+    ("GET", re.compile(r"/api/tokens/topups")),
+    ("GET", re.compile(r"/api/pay/requests")),
+    ("POST", re.compile(r"/api/pay/requests/[a-z0-9]+/(approve|reject)")),
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
 
@@ -235,7 +245,7 @@ class SecurityMiddleware:
             elif role == "demo" and not demo_allows(scope.get("method", "GET"), path):
                 blocked = (403, "The demo login can only use the demo page.", "/customerep")
             elif role == "partner" and not partner_allows(scope.get("method", "GET"), path):
-                blocked = (403, "This login can only use the client dashboard.", "/client-dashboard")
+                blocked = (403, "This login can only use the partner dashboard.", PARTNER_PAGE)
             elif (client := client_of(role)) is not None and not _allows(
                     self.client_routes.get(client, ()), scope.get("method", "GET"), path):
                 blocked = (403, "This login can only use its own page.", f"/client_{client}")

@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import re
+import shutil
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from app import catalog, sheets, sync, usage
 from app.clients import ClientBrand, brand_for_path, brand_page, load_clients, login_branding
 from app.config import BASE_DIR, SHEET_KEY_FILE, Settings, get_settings
 from app.imaging.io import ImageInputError, load_upload
+from app.payments import PayBook, PayError, mask_number, reason_text
 from app.pipeline import JobError, JobManager, derives_back, uses_back_picture
 from app.providers.registry import ProviderRegistry
 from app.schemas import (
@@ -40,6 +42,7 @@ from app.schemas import (
     VectorizeRequest,
 )
 from app.security import (
+    PARTNER_PAGE,
     SESSION_COOKIE,
     SESSION_DAYS,
     RateLimiter,
@@ -101,6 +104,38 @@ class TopUpRequest(BaseModel):
         if not value:
             raise ValueError("Write a note: what the tokens are for.")
         return value
+
+
+class BuyRequest(BaseModel):
+    """A client's bKash payment for a package of tokens (app/payments.py): which package, and bKash's TrxID."""
+    tokens: StrictInt  # the package, by its number of tokens
+    trx: str = Field(max_length=40)
+    sender: str = Field(max_length=30)  # the bKash number it was paid from
+    request_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")] | None = None  # the form's own id (sent again)
+
+
+class PayDecision(BaseModel):
+    """Why a payment is rejected: a standard reason, or "other" with words. The client sees it."""
+    reason: Literal["not_found", "amount", "used", "other"]
+    text: str = Field("", max_length=200)
+
+
+class PayPackage(BaseModel):
+    tokens: StrictInt
+    taka: StrictInt
+
+
+class PaySettingsRequest(BaseModel):
+    number: str = Field(max_length=30)  # the bKash number clients pay to ("" = buying off)
+    packages: list[PayPackage] = Field(max_length=6)
+
+
+class DownloadRequest(BaseModel):
+    """What the downloads box asks to be made ready (JobManager.start_download)."""
+    kind: Literal["png", "export", "eps-zip", "png-zip"]
+    variant: int = Field(0, ge=0, le=64)  # one image: its number (png, export)
+    preset: Literal["", "flat", "standard", "detailed", "raster"] = ""  # export, eps-zip
+    size: Literal["", "print", "original"] = ""  # png-zip
 
 
 class PromptPreviewRequest(BaseModel):
@@ -196,7 +231,8 @@ def client_login(request: Request) -> str | None:
 
 
 def is_partner(request: Request) -> bool:
-    """The partner login: the client dashboard only (tokens per client, read-only; 2026-11-23)."""
+    """The partner login: the Partner dashboard only (tokens per client; since 2026-11-24 it also checks bKash
+    payments and adds tokens)."""
     return request.scope.get("jhs_role") == "partner"
 
 
@@ -222,7 +258,7 @@ def made_by(request: Request, job: Job | None) -> bool:
 
 def limited_refusal(request: Request) -> HTTPException:
     if is_partner(request):
-        return HTTPException(403, "This login can only use the client dashboard.")
+        return HTTPException(403, "This login can only use the partner dashboard.")
     return HTTPException(403, "The demo login can only use the demo page." if is_demo(request)
                          else "This login can only use its own page.")
 
@@ -260,6 +296,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # every interaction, also in the owner's Google Sheet (app/sheets.py; the link in the key file .google_sheet)
     sheet = sheets.SheetLog(settings.output_dir, settings.sheet_url, settings.sheet_secret, settings.machine_name)
     manager.sheet = sheet
+    # bKash payments checked by hand (app/payments.py): the requests, and the head admin's number and packages
+    pays = PayBook(settings.output_dir)
     # the Mac's Dashboard on the online server (app/sync.py): this machine sends its report when sync_url is set
     sync_status: dict = {"enabled": bool(settings.sync_url and settings.sync_token), "last_ok_at": None,
                          "last_attempt_at": None, "last_error": None, "jobs": None}
@@ -298,6 +336,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         book.reload()
         sheet.reload()
         site.reload()
+        pays.reload()
+        repaired = pays.repair(book.by_request)  # approved just as the last server stopped: the tokens are in the ledger
+        if repaired:
+            log.warning("payments: %d payment(s) whose tokens were already added are now marked approved", repaired)
         for provider, status in settings.key_status.items():
             log.info("%s API key: %s", provider, status)
         log.info(
@@ -306,6 +348,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ", ".join(registry.brief_writers) or "none",
         )
         log.info("tokens: %s", f"on, prices {book.prices.as_dict()}" if book.enabled else "off (no tokens.json)")
+        log.info("payments: buying with bKash is %s (%d package(s), %d payment(s) waiting)",
+                 "on" if pays.enabled and book.enabled else "off", len(pays.settings["packages"]), pays.waiting())
         manager.ensure_usage_ledger()  # first, so the calls recover_interrupted logs land after the backfill
         if sheet.fresh:  # the sheet log's first start: every earlier job and top-up goes in first, oldest first
             rows = await asyncio.to_thread(sheets.backfill_rows, store, book.entries(), manager.client_name,
@@ -591,7 +635,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                          "taka": taka.get(slug, 0)}  # received in the period
                                         for slug, name in client_names().items()]}
         report["sync"] = dict(sync_status)
-        report["sheet"] = dict(sheet.status)  # the Google Sheet log: set up, rows waiting, the last try
+        report["sheet"] = dict(sheet.status)  # the Google Sheet log: set up, rows waiting, the last try, its address
+        # for the Supreme dashboard's "Is everything running?" and Settings (2026-11-24)
+        disk = shutil.disk_usage(settings.output_dir)
+        report["disk"] = {"free": disk.free, "total": disk.total}
+        report["site"] = dict(site.state)
+        report["cleanup"] = {"days": settings.cleanup_days, "min_free_gb": settings.cleanup_min_free_gb}
+        report["payments"] = {"waiting": pays.waiting(), "enabled": pays.enabled and book.enabled}
         return report
 
     # -- our tokens (app/tokens.py): purses, the client dashboard's data -----------------------------------------
@@ -631,6 +681,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def studio_or_partner(request: Request) -> None:
         if is_limited(request) and not is_partner(request):
             raise limited_refusal(request)
+
+    def who(request: Request) -> str:
+        """Who is acting, as the ledgers keep it: "partner", else "studio" (the head admin)."""
+        return "partner" if is_partner(request) else "studio"
+
+    def board_flags(request: Request) -> dict:
+        """What the login may do on the two dashboards: both add tokens and check payments; only the head admin takes
+        tokens back."""
+        return {"can_add": True, "can_take_back": not is_limited(request), "role": who(request),
+                "waiting": pays.waiting(), "buying": pays.enabled and book.enabled}
+
+    def pay_view(pay: dict, request: Request) -> dict:
+        """A payment request for the two dashboards. The partner sees the number it was paid from masked; the head
+        admin sees all of it (the owner, 2026-11-24: "for supreme dashboard, dont conceal the customer bkash phone
+        number")."""
+        return {**pay, "client_name": client_names().get(pay["client"], pay["client"]),
+                "sender": mask_number(pay["sender"]) if is_partner(request) else pay["sender"],
+                "reason_label": reason_text(pay)}
+
+    def pay_mine(pay: dict) -> dict:
+        """A client's own payment request, for its page: not who checked it."""
+        return {key: pay.get(key) for key in ("id", "tokens", "taka", "trx", "sender", "status", "at", "checked_at",
+                                                 "reason", "reason_text")}
 
     @app.get("/api/tokens/balance")
     async def token_balance(request: Request, client: str = "") -> dict:
@@ -675,7 +748,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          "jobs": len({job.id for job in mine} | charged_jobs.get(slug, set())),  # made or charged then
                          "last_job_at": mine[0].created_at if mine else None})
         rows.sort(key=lambda r: (-r["used"], r["name"].lower()))
-        return {"enabled": book.enabled, "can_add": not is_limited(request), "days": days,
+        return {"enabled": book.enabled, **board_flags(request), "days": days,
                 "login_enabled": bool(settings.app_password),  # the page's Log out button
                 "prices": book.prices.as_dict() if book.enabled else None, "clients": rows}
 
@@ -758,8 +831,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows, entries = await client_rows(slug, since)
         in_period = [e for e in entries if not since or e.get("at", "") >= since]
         return {
-            "enabled": book.enabled, "can_add": not is_limited(request), "days": days,
+            "enabled": book.enabled, **board_flags(request), "days": days,
             "prices": book.prices.as_dict() if book.enabled else None,
+            "payments": [pay_view(pay, request) for pay in pays.of_client(slug)],  # its bKash payments, all time
             "client": {"slug": slug, "name": names[slug], "has_page": slug in clients, "balance": book.balance(slug),
                        "available": book.available(slug),  # less what running jobs hold: the most a take-back can take
                        "used": sum(-e["tokens"] for e in in_period if e.get("type") == "charge"),
@@ -767,7 +841,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        "taka": sum(taka_of(e) for e in in_period if e.get("type") != "charge")},
             "jobs": rows,
             "topups": [{"at": e.get("at"), "tokens": e["tokens"], "taka": e.get("taka"), "note": e.get("note"),
-                        "by": e.get("by"), "balance": e.get("balance"),
+                        "by": e.get("by"), "balance": e.get("balance"), "trx": e.get("trx"),  # a bKash payment's TrxID
                         "request_id": e.get("request_id")}  # the page checks a top-up whose answer was lost
                        for e in reversed(entries) if e.get("type") != "charge"],
         }
@@ -792,16 +866,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "used": sum(-e["tokens"] for e in entries if e.get("type") == "charge"),
             "added": sum(e["tokens"] for e in changes), "taka": sum(taka_of(e) for e in changes),
             "jobs": rows,
-            "payments": [{"at": e.get("at"), "tokens": e["tokens"], "taka": e.get("taka"), "balance": e.get("balance")}
-                         for e in reversed(changes)],
+            "payments": [{"at": e.get("at"), "tokens": e["tokens"], "taka": e.get("taka"), "balance": e.get("balance"),
+                          "trx": e.get("trx")} for e in reversed(changes)],
+            # "Buy tokens" (app/payments.py): where to pay and what can be bought, and this client's bKash payments
+            "buy": {"enabled": pays.enabled and book.enabled, "number": pays.settings["number"] if pays.enabled else "",
+                    "packages": pays.settings["packages"] if pays.enabled else []},
+            "bkash": [pay_mine(pay) for pay in pays.of_client(slug)],
         }
 
     @app.post("/api/tokens/clients/{slug}/topup")
     async def token_topup(request: Request, slug: str, body: TopUpRequest) -> dict:
-        """Add tokens to a client's purse, or take some back with a negative number (studio login only; the owner
-        decided only they add tokens). Every change is a ledger line with the note, who and when."""
-        if is_limited(request):
-            raise limited_refusal(request)
+        """Add tokens to a client's purse (the head admin, and since 2026-11-24 the partner), or take some back with a
+        negative number (the head admin only). Every change is a ledger line with the note, who and when."""
+        studio_or_partner(request)
+        if is_partner(request) and body.tokens < 0:
+            raise HTTPException(403, "Only the head admin can take tokens back.")
         if slug not in client_names():
             raise HTTPException(404, "No such client.")
         done = book.by_request(body.request_id)
@@ -810,11 +889,123 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, "This form was already used for another change. Reload the page and try again.")
             return {"entry": done, "balance": book.balance(slug), "repeated": True}
         try:
-            entry = book.add(slug, body.tokens, body.note, "studio", taka=body.taka, request_id=body.request_id)
+            entry = book.add(slug, body.tokens, body.note, who(request), taka=body.taka, request_id=body.request_id)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         sheet.enqueue(sheets.topup_row(entry, client_names()[slug]))  # also in the Google Sheet log
         return {"entry": entry, "balance": book.balance(slug)}
+
+    @app.get("/api/tokens/jobs")
+    async def token_jobs(request: Request, days: int = Query(7, ge=0, le=3650), client: str = "") -> dict:
+        """The two dashboards' Jobs tab: every client's jobs in the last `days` days (0 = all) with the tokens each
+        part cost, newest first. Tokens only: no API costs, models or prompts (head admin and partner)."""
+        studio_or_partner(request)
+        names = client_names()
+        if client and client not in names:
+            raise HTTPException(404, "No such client.")
+        since = since_of(days)
+        rows: list[dict] = []
+        for slug in ([client] if client else list(names)):
+            mine, _ = await client_rows(slug, since)
+            rows += [{**row, "client": slug, "client_name": names[slug]} for row in mine]
+        rows.sort(key=lambda r: r["id"], reverse=True)
+        return {"days": days, "jobs": rows, "clients": [{"slug": slug, "name": name} for slug, name in names.items()]}
+
+    @app.get("/api/tokens/topups")
+    async def token_topups(request: Request, days: int = Query(0, ge=0, le=3650)) -> dict:
+        """The two dashboards' Payments tab: the tokens added or taken back by hand for every client, newest first
+        (a bKash payment's top-up is in the payments list instead). Head admin and partner."""
+        studio_or_partner(request)
+        names = client_names()
+        since = since_of(days)
+        rows = [{"at": e.get("at"), "client": e["client"], "client_name": names.get(e["client"], e["client"]),
+                 "tokens": e["tokens"], "taka": e.get("taka"), "note": e.get("note"), "by": e.get("by"),
+                 "balance": e.get("balance")}
+                for e in reversed(book.entries())
+                if e.get("type") != "charge" and not e.get("pay_id") and (not since or e.get("at", "") >= since)]
+        return {"days": days, "topups": rows}
+
+    # -- bKash payments, checked by hand (app/payments.py, 2026-11-24) -------------------------------------------
+
+    @app.get("/api/pay/settings")
+    async def pay_settings(request: Request) -> dict:
+        """The bKash number clients pay to and the packages they can buy (the head admin's; the Supreme dashboard)."""
+        if is_limited(request):
+            raise limited_refusal(request)
+        return {**pays.settings, "enabled": pays.enabled, "tokens_enabled": book.enabled}
+
+    @app.post("/api/pay/settings")
+    async def pay_settings_save(request: Request, body: PaySettingsRequest) -> dict:
+        if is_limited(request):
+            raise limited_refusal(request)
+        try:
+            saved = pays.set_settings(body.number, [package.model_dump() for package in body.packages], "studio")
+        except PayError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        return {**saved, "enabled": pays.enabled, "tokens_enabled": book.enabled}
+
+    @app.post("/api/pay/requests", status_code=201)
+    async def pay_submit(request: Request, body: BuyRequest) -> dict:
+        """A client page's "Buy tokens": the client paid with bKash and gives the TrxID (a client's own login only).
+        The payment waits until the head admin or the partner has checked it."""
+        own = client_login(request)
+        if own is None:
+            raise HTTPException(403, "Only a client's own login can send a payment.")
+        if not book.enabled:
+            raise HTTPException(409, "Tokens are not in use.")
+        repeated = pays.by_form(body.request_id) is not None  # the same form again: no second request, no second row
+        try:
+            pay = pays.submit(own, body.tokens, body.trx, body.sender, body.request_id)
+        except PayError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        if not repeated:
+            sheet.enqueue(sheets.payment_row(pay, sheets.PAY_SENT, client_names().get(own, own),
+                                             balance=book.balance(own)))
+        return {"payment": pay_mine(pay), "repeated": repeated}
+
+    @app.get("/api/pay/requests")
+    async def pay_requests(request: Request) -> dict:
+        """Every bKash payment, newest first (head admin and partner)."""
+        studio_or_partner(request)
+        return {"payments": [pay_view(pay, request) for pay in pays.all()], **board_flags(request)}
+
+    @app.post("/api/pay/requests/{pay_id}/approve")
+    async def pay_approve(request: Request, pay_id: str) -> dict:
+        """The money was seen in bKash: the payment's tokens go into the client's purse (head admin and partner).
+        Nothing is awaited between the look and the two lines, so two people approving add the tokens once."""
+        studio_or_partner(request)
+        pay = pays.get(pay_id)
+        if pay is None:
+            raise HTTPException(404, "No such payment.")
+        if pay["status"] != "waiting":
+            by_whom = sheets.WHO.get(pay.get("checked_by"), pay.get("checked_by"))
+            raise HTTPException(409, f"This payment was already {pay['status']}" + (f" by {by_whom}." if by_whom else "."))
+        if not book.enabled:
+            raise HTTPException(409, "Tokens are off on this server, so none can be added.")
+        by = who(request)
+        try:  # the ledger first: it takes "pay-<id>" once, whatever happens after (app/payments.py)
+            entry = book.add(pay["client"], pay["tokens"], f"bKash {pay['trx']}", by, taka=pay["taka"],
+                             request_id=f"pay-{pay_id}", extra={"pay_id": pay_id, "trx": pay["trx"]})
+            done = pays.decide(pay_id, "approved", by, balance=entry["balance"])
+        except PayError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        sheet.enqueue(sheets.payment_row(done, sheets.PAY_APPROVED, client_names().get(pay["client"], pay["client"]),
+                                         balance=entry["balance"]))
+        return {"payment": pay_view(done, request), "balance": book.balance(pay["client"])}
+
+    @app.post("/api/pay/requests/{pay_id}/reject")
+    async def pay_reject(request: Request, pay_id: str, body: PayDecision) -> dict:
+        """The money wasn't found, or doesn't match: the payment is rejected with a reason the client sees."""
+        studio_or_partner(request)
+        try:
+            done = pays.decide(pay_id, "rejected", who(request), reason=body.reason, text=body.text)
+        except PayError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        sheet.enqueue(sheets.payment_row(done, sheets.PAY_REJECTED, client_names().get(done["client"], done["client"]),
+                                         balance=book.balance(done["client"]), reason=reason_text(done)))
+        return {"payment": pay_view(done, request)}
 
     # -- the Mac's Dashboard on the online server (app/sync.py) --------------------------------------------------
 
@@ -868,6 +1059,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, "Sending to the server isn't set up on this machine.")
         await push_report()
         return dict(sync_status)
+
+    @app.get("/api/admin/sheet-script")
+    async def sheet_script(request: Request) -> JSONResponse:
+        """The Apps Script to paste into the Google Sheet, with this machine's secret in it (the Supreme dashboard's
+        Settings; the head admin only). The script file on disk is a template without it (app/sheet_script.gs)."""
+        if is_limited(request):
+            raise limited_refusal(request)
+        if not sheet.enabled:
+            raise HTTPException(409, f"The Google Sheet isn't set up on this machine (the key file {SHEET_KEY_FILE}).")
+        return JSONResponse({"script": sheets.script_text(settings.sheet_secret), "version": sheets.SCRIPT_VERSION},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/admin/sheet-check")
+    async def sheet_check(request: Request) -> dict:
+        """Ask the sheet's script which version it is, now (nothing is written there): after a new script was pasted,
+        the Supreme dashboard shows at once that it took (the head admin only)."""
+        if is_limited(request):
+            raise limited_refusal(request)
+        if not sheet.enabled:
+            raise HTTPException(409, f"The Google Sheet isn't set up on this machine (the key file {SHEET_KEY_FILE}).")
+        return await sheet.check()
 
     @app.post("/api/recreate", status_code=202, response_model=JobCreated)
     async def recreate(
@@ -1076,6 +1288,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             bind_hold(hold, job)
             return JobCreated(job_id=job.id)
 
+        @app.post(api + "/{job_id}/downloads", status_code=202)
+        async def download_start(request: Request, job_id: str, body: DownloadRequest) -> dict:
+            """The downloads box: make a download's files ready in the background (a panel's print PNG, an export,
+            every panel's for a ZIP). The answer and the GET below say how far it is; the file itself is then fetched
+            from its usual address by the browser."""
+            login_scope(request, job_id)
+            if not is_valid_job_id(job_id):
+                raise HTTPException(404, "Job not found.")
+            try:
+                return mgr.start_download(job_id, body.kind, variant=body.variant, preset=body.preset, size=body.size)
+            except JobError as exc:
+                raise job_error(exc) from exc
+
+        @app.get(api + "/{job_id}/downloads")
+        async def download_state(request: Request, job_id: str, key: str = Query(max_length=200)) -> dict:
+            login_scope(request, job_id)
+            state = mgr.download_state(job_id, key) if is_valid_job_id(job_id) else None
+            if state is None:
+                raise HTTPException(404, "This download is not known here. Start it again.")
+            return state
+
         @app.get(api + "/{job_id}/panels-eps.zip")
         async def panels_eps_zip(
             request: Request, job_id: str, preset: Literal["flat", "standard", "detailed", "raster"] = "detailed"
@@ -1157,7 +1390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if role == "demo":
                 target = "/customerep"
             elif role == "partner":
-                target = "/client-dashboard"
+                target = PARTNER_PAGE
             elif client is not None and getattr(brand_for_path(clients, target), "slug", None) != client:
                 target = f"/client_{client}"
             response = RedirectResponse(target, status_code=303)
@@ -1229,11 +1462,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(brand_page(page, brand), headers={"Cache-Control": "no-cache"})
 
+    @app.get(PARTNER_PAGE, include_in_schema=False)
+    async def partner_dashboard() -> FileResponse:
+        """The Partner dashboard (2026-11-23; the owner's name for it since 2026-11-24): for the partner login and the
+        head admin. Payments to check, clients, payments and jobs; our tokens and taka only, never the API costs."""
+        return FileResponse(STATIC_DIR / "partner-dashboard.html", headers={"Cache-Control": "no-cache"})
+
     @app.get("/client-dashboard", include_in_schema=False)
-    async def client_dashboard() -> FileResponse:
-        """The client-centric dashboard (2026-11-23): each client's purse and the tokens its jobs used, for the
-        partner login (read-only) and the studio login (which also adds tokens). Tokens only: no money, no AI."""
-        return FileResponse(STATIC_DIR / "client-dashboard.html", headers={"Cache-Control": "no-cache"})
+    async def client_dashboard_old() -> RedirectResponse:
+        """The Partner dashboard's address until 2026-11-24 (the browser keeps the #part of an old link)."""
+        return RedirectResponse(PARTNER_PAGE, status_code=307)
+
+    @app.get("/supreme-dashboard", include_in_schema=False)
+    async def supreme_dashboard(request: Request) -> FileResponse:
+        """The Supreme dashboard (2026-11-24): the head admin's own, with everything (the Partner dashboard's tabs plus
+        the LLM costs and the settings). The middleware sends every other login to its own page."""
+        if is_limited(request):
+            raise limited_refusal(request)
+        return FileResponse(STATIC_DIR / "supreme-dashboard.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
     return app

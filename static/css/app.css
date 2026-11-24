@@ -461,7 +461,8 @@ a { color: var(--accent-text); }
 @keyframes shimmer { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
 
 .toasts {
-  position: fixed; right: 16px; bottom: 16px; z-index: 200;
+  /* above the downloads box when it shows (--downloads-h: its height, set by downloads.js) */
+  position: fixed; right: 16px; bottom: calc(16px + var(--downloads-h, 0px)); z-index: 200;
   display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100vw - 32px)); pointer-events: none;
 }
 .toast {
@@ -903,9 +904,9 @@ dialog::backdrop { background: rgba(8, 11, 18, 0.55); }
 .dash-error { color: var(--danger); white-space: normal; max-width: 320px; }
 .dash-job .chev { transition: transform 0.15s; }
 .dash-job .chev.is-open { transform: rotate(180deg); }
-/* ---------- Our tokens (2026-11-23): a client page's purse and the hint by Generate / Send (tokens.js), and the client
-   dashboard (/client-dashboard, clientboard.js) ---------- */
-[data-app="clientboard"] .header-actions { margin-left: auto; }
+/* ---------- Our tokens (2026-11-23): a client page's purse and the hint by Generate / Send (tokens.js), and the
+   Partner and Supreme dashboards (boards.js; more of theirs at the end of this file) ---------- */
+[data-app="board"] .header-actions { margin-left: auto; }
 .token-chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--border);
   border-radius: 999px; background: var(--surface-2); font-size: 13px; color: var(--text-2); white-space: nowrap;
@@ -1017,3 +1018,120 @@ a.token-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .choice-example-imgs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
 .choice-example-imgs img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #fff; border-radius: 8px; border: 1px solid rgba(127, 127, 127, 0.3); }
 .choice-example-arrow { font-size: 18px; opacity: 0.6; }
+
+/* ---------- The two dashboards (2026-11-24; boards.js): /partner-dashboard and /supreme-dashboard ---------- */
+.board-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.board-tab {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 16px; margin-bottom: -1px;
+  border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; color: var(--text-2); font-weight: 650;
+  text-decoration: none; white-space: nowrap;
+}
+.board-tab:hover { color: var(--text); background: var(--surface-2); }
+.board-tab[aria-selected="true"] { color: var(--accent-text); border-bottom-color: var(--accent); }
+.board-count { line-height: 18px; }
+.board-subbar { margin-bottom: 0; }
+.board-subbar .hint { margin: 0; }
+.board-filter-note { align-self: center; margin: 0 0 0 auto; }
+.btn-success { background: var(--success); border-color: var(--success); color: #fff; }
+.btn-success:hover { background: var(--success); filter: brightness(0.95); }
+.btn-sheet { color: var(--success); border-color: var(--success-border); background: var(--success-soft); }
+.btn-sheet:hover { background: var(--success-soft); filter: brightness(0.97); }
+.pay-code { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); }
+.pay-actions .btn + .btn { margin-left: 6px; }
+.pay-step {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; padding: 9px 12px;
+  border-radius: var(--radius); font-size: 13px; color: var(--text);
+}
+.pay-step.is-ok { background: var(--success-soft); }
+.pay-step.is-ok .icon { color: var(--success); flex: none; }
+.pay-step.is-no { background: var(--danger-soft); }
+.pay-other { display: inline-flex; gap: 6px; flex: 1 1 320px; }
+.pay-other .input { flex: 1; min-height: 30px; }
+.pay-clear { display: flex; align-items: center; gap: 8px; color: var(--success); font-weight: 600; }
+.pay-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pay-chip { border-radius: 999px; }
+.dash-table th.only-you { color: var(--accent-text); }
+.dash-tile.only-you { border-color: var(--accent-border); background: var(--accent-soft); }
+.dash-tile.only-you .dash-tile-label { color: var(--accent-text); }
+.dash-table td.is-minus strong { color: var(--danger); }
+.cb-add.has-client {
+  grid-template-columns: minmax(140px, 200px) minmax(110px, 150px) minmax(110px, 150px) minmax(0, 1fr) auto;
+}
+.health-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.health {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 13px;
+}
+.health-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--text-3); }
+.health.is-ok .health-dot { background: var(--success); }
+.health.is-warn { border-color: var(--warning-border); background: var(--warning-soft); }
+.health.is-warn .health-dot { background: var(--warning); }
+.health.is-bad { border-color: var(--danger-border); background: var(--danger-soft); }
+.health.is-bad .health-dot { background: var(--danger); }
+.settings-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.pay-settings { display: grid; grid-template-columns: minmax(280px, 400px) minmax(0, 1fr); gap: 16px 32px; }
+.pay-number-form { display: flex; gap: 8px; }
+.pay-number { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+.pay-package {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+}
+.pay-package-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+
+.sheet-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; }
+.sheet-steps li { padding-left: 4px; }
+.sheet-update > summary { cursor: pointer; color: var(--text-2); }
+.sheet-update[open] > summary { margin-bottom: 12px; }
+.sheet-script { font-family: var(--font-mono); font-size: 12px; white-space: pre; }
+
+/* ---------- "Buy tokens" on a client page (customerboard.js, 2026-11-24): a bKash payment, checked by hand ---------- */
+.modal.buy-dialog { width: min(560px, calc(100vw - 32px)); }
+.buy-steps { display: flex; flex-direction: column; gap: 16px; }
+.buy-packages { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.buy-package {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius); background: var(--surface); cursor: pointer;
+}
+.buy-package:hover { border-color: var(--accent-border); }
+.buy-package.is-on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.buy-package:focus-within { outline: 3px solid var(--accent-ring); outline-offset: 2px; }
+.buy-package-main { font-size: 15px; font-weight: 700; color: var(--text); }
+.buy-package.is-on .buy-package-main { color: var(--accent-text); }
+.buy-pay {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
+}
+.buy-pay p { margin: 0; }
+.buy-number { font-size: 20px; font-weight: 700; letter-spacing: 0.03em; font-variant-numeric: tabular-nums; }
+.buy-trx { font-family: var(--font-mono); font-weight: 600; text-transform: uppercase; }
+.buy-note { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--warning-soft); color: var(--text); font-size: 13px; }
+
+/* ---------- The downloads box (downloads.js, 2026-11-24): bottom right; each download's files being made, then 100% ---------- */
+.downloads {
+  position: fixed; right: 16px; bottom: 16px; z-index: 190; width: min(380px, calc(100vw - 32px));
+  display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-radius: var(--radius-l);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-3); font-size: 13px; text-align: left;
+}
+.downloads[hidden] { display: none; }
+.downloads-head {
+  display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--border); font-weight: 700;
+}
+.downloads-list { display: flex; flex-direction: column; max-height: min(340px, 50vh); overflow: auto; }
+.downloads-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 12px; }
+.downloads-item + .downloads-item { border-top: 1px solid var(--border); }
+.downloads-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.downloads-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.downloads-pct { flex: none; color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 600; }
+.downloads-bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.downloads-bar[hidden] { display: none; }
+.downloads-fill { height: 100%; width: 0; border-radius: 3px; background: var(--accent); transition: width 0.25s linear; }
+.downloads-item.is-done .downloads-fill { background: var(--success); }
+.downloads-item.is-done .downloads-pct { color: var(--success); }
+.downloads-foot { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text-2); }
+.downloads-status { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.downloads-mark { display: inline-flex; flex: none; color: var(--success); }
+.downloads-mark[hidden] { display: none; }
+.downloads-actions { display: inline-flex; flex: none; align-items: center; gap: 4px; }
+.downloads-item.is-failed .downloads-status { color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .downloads-fill { transition: none; } }

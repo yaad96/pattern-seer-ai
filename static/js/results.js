@@ -3,8 +3,9 @@
  * lightbox, before/after comparison, palette, PNG download and EPS/SVG/PDF export; plus the
  * AI designer's brief card.
  */
-import { api, fileUrl, getConfig } from './api.js';
+import { api, fileUrl, getConfig, zipUrl } from './api.js';
 import { h, icon, clear, replace, appendAll, fmtBytes, fmtDims, fmtInt, fmtPrintSize, fmtSeconds, fmtUsd, isHex, parseRatio, uid } from './dom.js';
+import { startDownload, viaBox } from './downloads.js';
 import { announce, copyToast, openLightbox, setBusy, toast } from './ui.js';
 
 export function modelLabel(providerName, modelId) {
@@ -80,27 +81,29 @@ export function createResults(job, options) {
 /* Panel jobs: two buttons above the cards, each opening a menu of ZIP downloads; they turn on once all panels are
    done. EPS: every panel's EPS at one preset (detailed first, the default; or raster), plus (`combined`) one EPS
    with the front, back and sleeve together. PNG: every panel's PNG, at the print size (the default) or exactly as
-   the AI made it. Items: [value, label, busy text, announcement, tooltip]. */
-const TRACING = ['Tracing the panels and making the ZIP…', 'Tracing the panels for the ZIP. This can take a little while…'];
-const MAKING = 'Making the ZIP. This can take a little while…';
+   the AI made it. A choice goes to the downloads box (downloads.js), which shows the files being made and then lets
+   the browser fetch the ZIP. Items: [value, label, what the downloads box calls it, tooltip]. */
 const EPS_ZIP = [
-  ['detailed', 'Detailed, 32 colours (default)', ...TRACING],
-  ['standard', 'Standard, 16 colours', ...TRACING],
-  ['flat', 'Flat, 8 colours', ...TRACING],
-  ['raster', 'Raster EPS (exact pixels)', 'Making the raster EPS files and the ZIP…', MAKING,
+  ['detailed', 'Detailed, 32 colours (default)', 'All panels: EPS (detailed)'],
+  ['standard', 'Standard, 16 colours', 'All panels: EPS (standard)'],
+  ['flat', 'Flat, 8 colours', 'All panels: EPS (flat)'],
+  ['raster', 'Raster EPS (exact pixels)', 'All panels: EPS (raster)',
     'The HD image is placed inside the EPS. Use it for photos or complex gradients.'],
 ];
 const PNG_ZIP = [
-  ['print', 'Print size, 300 dpi (default)', 'Making the print-size PNGs and the ZIP…', MAKING],
-  ['original', 'Original size (as the AI made it)', 'Making the ZIP…', MAKING],
+  ['print', 'Print size, 300 dpi (default)', 'All panels: PNG (print size)'],
+  ['original', 'Original size (as the AI made it)', 'All panels: PNG (original size)'],
 ];
 
 function createPanelZips(jobId, combined, customer) {
+  const start = (kind, items, param) => (value) => startDownload({
+    jobId, what: { kind: `${kind}-zip`, [param]: value }, title: items.find((item) => item[0] === value)[2], url: zipUrl(jobId, kind, value),
+  });
   const menus = [
-    createZipMenu('eps', 'Download all panel eps zip (detailed)', EPS_ZIP, (preset) => api.panelsZip(jobId, preset),
+    createZipMenu('eps', 'Download all panel eps zip (detailed)', EPS_ZIP, start('eps', EPS_ZIP, 'preset'),
       combined ? 'Each ZIP has every panel\'s EPS, plus one EPS with the front, back and sleeve together.' : null),
     // the customer page offers the print size only (no original-size PNGs there)
-    createZipMenu('png', 'Download all panel png zip', customer ? PNG_ZIP.slice(0, 1) : PNG_ZIP, (size) => api.panelsPngZip(jobId, size),
+    createZipMenu('png', 'Download all panel png zip', customer ? PNG_ZIP.slice(0, 1) : PNG_ZIP, start('png', PNG_ZIP, 'size'),
       customer ? 'Every panel at its 3XL print size at 300 dpi (big files).'
         : 'Print size: every panel at its 3XL print size at 300 dpi (big files). Original size: the images exactly as the AI made them.'),
   ];
@@ -116,7 +119,7 @@ function createPanelZips(jobId, combined, customer) {
   };
 }
 
-function createZipMenu(kind, label, items, fetchZip, note) {
+function createZipMenu(kind, label, items, start, note) {
   const menuId = uid('panel-zip');
   const button = h('button', {
     type: 'button', class: 'btn btn-sm', disabled: true, 'aria-expanded': false, 'aria-controls': menuId,
@@ -125,13 +128,15 @@ function createZipMenu(kind, label, items, fetchZip, note) {
   const noteId = uid('panel-zip-note');
   const menu = h('div', { class: 'panel-zip-menu', id: menuId, hidden: true },
     note ? h('p', { class: 'hint panel-zip-note', id: noteId }, note) : null,
-    items.map(([value, text, , , tip]) => h('button', {
-      type: 'button', class: 'btn btn-sm btn-ghost', dataset: { preset: value }, onClick: () => download(value),
+    items.map(([value, text, , tip]) => h('button', {
+      type: 'button', class: 'btn btn-sm btn-ghost', dataset: { preset: value },
+      onClick: () => {
+        close(true);
+        start(value);
+      },
       'aria-describedby': note ? noteId : null, title: tip || null,
     }, text)));
   const el = h('div', { class: 'panel-zip', dataset: { zip: kind } }, button, menu);
-  let ready = false;
-  let busy = false;
 
   function outside(e) {
     if (!el.contains(e.target)) close(false);
@@ -160,42 +165,13 @@ function createZipMenu(kind, label, items, fetchZip, note) {
     if (refocus) button.focus();
   }
 
-  async function download(value) {
-    const [, , busyText, announcement] = items.find((item) => item[0] === value);
-    close(false);
-    busy = true;
-    setBusy(button, true, busyText);
-    announce(announcement);
-    try {
-      const { blob, filename } = await fetchZip(value);
-      saveBlob(blob, filename);
-      announce('The ZIP is downloading.');
-    } catch (err) {
-      toast(`ZIP download failed: ${err.message}`, { kind: 'error' });
-    } finally {
-      busy = false;
-      setBusy(button, false);
-      button.disabled = !ready;
-    }
-  }
-
   return {
     el,
-    setReady(value) {
-      ready = value;
-      if (!busy) button.disabled = !ready;
+    setReady(ready) {
+      button.disabled = !ready;
       if (!ready && !menu.hidden) close(false);
     },
   };
-}
-
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const link = h('a', { href: url, download: filename, hidden: true });
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 /* Panel jobs: what the AI reference check found for the panel (VariantInfo.source). The mark (full /
@@ -303,6 +279,9 @@ function createVariantCard(index, opts, label) {
     const compareSrc = opts.compare && compareInput ? fileUrl(id, compareInput) : null;
     const upscaled = Boolean(v.raw_width && v.raw_height && (v.raw_width !== v.width || v.raw_height !== v.height));
     let view = 'result';
+    // A panel's print-size PNG may have to be made first (seconds), so its download goes through the downloads
+    // box; any other image's PNG is there already and stays a plain link.
+    const pngLink = (link) => (v.panel ? viaBox(link, { jobId: id, what: { kind: 'png', variant: v.index }, title: `${title}: PNG` }) : link);
 
     const openFull = () => openLightbox({
       src: fileUrl(id, fullName),
@@ -310,6 +289,7 @@ function createVariantCard(index, opts, label) {
       caption: opts.customer ? title : `${title} · ${fmtDims(v.raw_width || v.width, v.raw_height || v.height)}`,
       downloadUrl: fileUrl(id, v.png, true),
       downloadLabel: 'Download PNG',
+      download: pngLink,
     });
 
     const frame = h('div', { class: 'variant-frame checker', style: { '--ar': ratio.toFixed(4) } });
@@ -321,6 +301,7 @@ function createVariantCard(index, opts, label) {
 
     const vectors = createVectorPanel(id, v, {
       open: opts.vectorsOpen,
+      title,
       onPreview(asset) {
         openLightbox({
           src: fileUrl(id, asset.svg),
@@ -367,7 +348,7 @@ function createVariantCard(index, opts, label) {
         opts.customer ? null : h('ul', { class: 'meta-list' }, meta.filter(Boolean).map((m) => h('li', null, m))),
         v.palette && v.palette.length ? createPalette(v.palette) : null,
         h('div', { class: 'variant-actions' },
-          h('a', { class: 'btn btn-sm btn-primary', href: fileUrl(id, v.png, true), download: '' }, icon('download'), 'Download PNG'),
+          pngLink(h('a', { class: 'btn btn-sm btn-primary', href: fileUrl(id, v.png, true), download: '' }, icon('download'), 'Download PNG')),
           upscaled && v.raw && !opts.customer // not on the customer page
             ? h('a', { class: 'btn btn-sm', href: fileUrl(id, v.raw, true), download: '', title: 'The image exactly as the model returned it' }, 'Original size PNG')
             : null,
@@ -526,8 +507,10 @@ function statsLine(asset) {
   return parts.length ? h('span', { class: 'vector-stats' }, dotSeparated(parts)) : null;
 }
 
-/** One row per catalog vector preset: Create -> progress -> Download EPS / SVG / PDF + stats + preview toggle. */
-function createVectorPanel(jobId, variant, { open, onPreview }) {
+/** One row per catalog vector preset: Create -> progress -> Download EPS / SVG / PDF + stats + preview toggle.
+ * The three downloads go through the downloads box: the server deletes an older job's exports (its clean-up) and
+ * makes them again when asked, which the box shows; an export that is there starts at once. */
+function createVectorPanel(jobId, variant, { open, onPreview, title }) {
   const presets = getConfig().catalog.vector_presets || [];
   const assets = new Map(Object.entries(variant.vectors || {}));
   const busy = new Set();
@@ -544,10 +527,16 @@ function createVectorPanel(jobId, variant, { open, onPreview }) {
         preset.value === 'raster' ? 'Building EPS…' : 'Tracing vectors…'));
     } else if (asset) {
       const pdf = pdfOf(asset);
+      // an export from before the layered tracer keeps plain links (asking the server for it would trace it anew)
+      const link = (name, type, extra) => {
+        const el = h('a', { class: ['btn btn-sm', extra], href: fileUrl(jobId, name, true), download: '' }, icon('download'), type);
+        return isLegacyVector(asset) ? el
+          : viaBox(el, { jobId, what: { kind: 'export', variant: variant.index, preset: preset.value }, title: `${title}: ${type} (${preset.value})` });
+      };
       appendAll(actions, [
-        h('a', { class: 'btn btn-sm btn-primary', href: fileUrl(jobId, asset.eps, true), download: '' }, icon('download'), 'EPS'),
-        asset.svg ? h('a', { class: 'btn btn-sm', href: fileUrl(jobId, asset.svg, true), download: '' }, icon('download'), 'SVG') : null,
-        pdf ? h('a', { class: 'btn btn-sm', href: fileUrl(jobId, pdf, true), download: '' }, icon('download'), 'PDF') : null,
+        link(asset.eps, 'EPS', 'btn-primary'),
+        asset.svg ? link(asset.svg, 'SVG') : null,
+        pdf ? link(pdf, 'PDF') : null,
         asset.svg
           ? h('button', { type: 'button', class: 'btn btn-sm', 'aria-haspopup': 'dialog', onClick: () => onPreview(asset) },
             icon('eye'), 'Preview')

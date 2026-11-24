@@ -43,7 +43,9 @@ COLUMNS = [
     "Row ID", "Event", "Machine", "Time (UTC)", "Time (Bangladesh)", "Login", "Customer", "Client ID", "Job ID",
     "Job started (UTC)", "Job started (Bangladesh)", "Took (s)", "Type", "What was asked", "Back made from",
     "Status", "Images made", "Images failed", "Failed parts", "Tokens charged", "Token items", "Tokens added",
-    "Tokens left after", "Taka received", "Top-up note", "Added by", "Real cost (USD)", "Image cost (USD)",
+    "Tokens left after", "Taka received", "Top-up note", "Added by", "bKash TrxID", "bKash sender", "Checked by",
+    "Reason", "bKash package taka", "bKash package tokens", "bKash sent (UTC)", "bKash sent (Bangladesh)",
+    "Real cost (USD)", "Image cost (USD)",
     "AI designer cost (USD)", "API calls", "Calls of unknown cost", "Model", "Resolution", "Chat ID",
     "Change request", "Client's message", "Designer's reply", "Design title", "Design brief", "Suggestions",
     "Staff notes", "Removals", "Fidelity", "Warnings", "Errors", "Reference check", "Input files", "Output files",
@@ -157,18 +159,55 @@ def job_row(job, event: str, *, charged=(), balance_after: int | None = None, cu
     }
 
 
+WHO = {"studio": "Head admin", "partner": "Partner"}  # the ledger keeps "studio" for the head admin
+# The events of a bKash payment (app/payments.py). The sheet's script (sheet_script.gs) copies the two checked ones
+# from the log tab to its "bKash" tab.
+PAY_SENT, PAY_APPROVED, PAY_REJECTED = "bKash payment sent", "bKash payment approved", "bKash payment rejected"
+SCRIPT = Path(__file__).with_name("sheet_script.gs")  # the Apps Script, with a place for the secret
+SCRIPT_VERSION = 2  # what sheet_script.gs answers as "version"; a script from before 2026-11-24 answers none
+
+
+def script_text(secret: str) -> str:
+    """The Apps Script to paste into the sheet, with this machine's secret in it (the Supreme dashboard's Settings
+    hand it to the head admin; nothing else ever shows the secret)."""
+    return SCRIPT.read_text(encoding="utf-8").replace("__SECRET__", json.dumps(secret), 1)
+
+
 def topup_row(entry: dict, customer: str = "", *, event: str | None = None) -> dict:
     """A top-up or take-back of tokens (a token-ledger line)."""
     at_utc, at_bd = _times(entry.get("at"))
+    who = WHO.get(entry.get("by"), entry.get("by") or "")
     return {
         "Event": event or ("Tokens added" if entry["tokens"] > 0 else "Tokens taken back"),
-        "Time (UTC)": at_utc, "Time (Bangladesh)": at_bd, "Login": "Head admin", "Customer": customer,
+        "Time (UTC)": at_utc, "Time (Bangladesh)": at_bd, "Login": who or "Head admin", "Customer": customer,
         "Client ID": entry.get("client", ""), "Tokens added": entry["tokens"],
         "Tokens left after": entry.get("balance", ""),
         "Taka received": entry["taka"] if isinstance(entry.get("taka"), int) else "",
         "Top-up note": _text(entry.get("note") or ""),
-        "Added by": "Head admin" if entry.get("by") == "studio" else entry.get("by") or "",  # the ledger keeps "studio"
+        "Added by": who,
     }
+
+
+def payment_row(pay: dict, event: str, customer: str = "", *, balance: int | None = None, reason: str = "") -> dict:
+    """A bKash payment (app/payments.py): sent by the client, then approved (its tokens added) or rejected."""
+    at_utc, at_bd = _times(pay.get("checked_at") if event != PAY_SENT else pay.get("at"))
+    who = WHO.get(pay.get("checked_by"), pay.get("checked_by") or "")
+    row = {
+        "Event": event, "Time (UTC)": at_utc, "Time (Bangladesh)": at_bd,
+        "Login": f"Client ({pay.get('client', '')})" if event == PAY_SENT else who,
+        "Customer": customer, "Client ID": pay.get("client", ""),
+        "Tokens added": pay.get("tokens", "") if event == PAY_APPROVED else 0,
+        "Tokens left after": "" if balance is None else balance,
+        "Taka received": pay.get("taka", "") if event == PAY_APPROVED else "",
+        "Top-up note": f"bKash payment of {pay.get('taka', '')} taka for {pay.get('tokens', '')} tokens",
+        "Added by": who if event == PAY_APPROVED else "",
+        "bKash TrxID": pay.get("trx", ""), "bKash sender": pay.get("sender", ""),
+        "Checked by": who if event != PAY_SENT else "", "Reason": _text(reason),
+        # the package the client said it paid for, and when (a rejected payment adds no tokens and no taka)
+        "bKash package taka": pay.get("taka", ""), "bKash package tokens": pay.get("tokens", ""),
+    }
+    row["bKash sent (UTC)"], row["bKash sent (Bangladesh)"] = _times(pay.get("at"))
+    return row
 
 
 def backfill_rows(store, entries: list[dict], client_name, read_calls) -> list[dict]:
@@ -204,7 +243,11 @@ class SheetLog:
         self.url, self.secret, self.machine = url, secret, machine
         self.fresh = not self.outbox.exists()  # the first start: earlier jobs are queued too (backfill)
         self._wake: asyncio.Event | None = None
-        self.status = {"enabled": bool(url and secret), "pending": 0, "last_ok_at": None, "last_error": None}
+        saved = self._saved()
+        # sheet_url: the sheet's own address, and script: its script's version, both as the script last said them
+        self.status = {"enabled": bool(url and secret), "pending": 0, "last_ok_at": None, "last_error": None,
+                       "sheet_url": saved.get("sheet_url"), "script": saved.get("script"),
+                       "script_wanted": SCRIPT_VERSION}
         self.status["pending"] = len(self.pending())
 
     def reload(self) -> None:
@@ -217,18 +260,23 @@ class SheetLog:
     def enabled(self) -> bool:
         return bool(self.url and self.secret)
 
+    def _saved(self) -> dict:
+        try:
+            data = json.loads(self.cursor_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def _offset(self) -> int:
         """How far into the outbox everything is delivered (bytes)."""
-        try:
-            offset = json.loads(self.cursor_path.read_text(encoding="utf-8")).get("offset", 0)
-        except (OSError, ValueError, AttributeError):
-            return 0
-        return offset if isinstance(offset, int) and offset >= 0 else 0
+        offset = self._saved().get("offset", 0)
+        return offset if isinstance(offset, int) and not isinstance(offset, bool) and offset >= 0 else 0
 
     def _save_offset(self, offset: int) -> None:
         tmp = self.cursor_path.with_name(f".{self.cursor_path.name}.{uuid4().hex}.tmp")
         try:
-            tmp.write_text(json.dumps({"offset": offset, "at": utcnow_iso()}), encoding="utf-8")
+            tmp.write_text(json.dumps({"offset": offset, "at": utcnow_iso(), "sheet_url": self.status.get("sheet_url"),
+                                       "script": self.status.get("script")}), encoding="utf-8")
             os.replace(tmp, self.cursor_path)
         finally:
             tmp.unlink(missing_ok=True)
@@ -282,7 +330,28 @@ class SheetLog:
         if not isinstance(answer, dict) or answer.get("ok") is not True:
             reason = answer.get("error") if isinstance(answer, dict) else None
             raise RuntimeError(f"the sheet refused the rows ({reason or 'no reason given'})")
+        # the script since 2026-11-24 also says its version and the sheet's own address
+        version = answer.get("version")
+        self.status["script"] = version if isinstance(version, int) and not isinstance(version, bool) else None
+        link = answer.get("sheet_url")
+        if isinstance(link, str) and link.startswith("https://docs.google.com/spreadsheets/") and len(link) < 300:
+            self.status["sheet_url"] = link
         return [str(i) for i in answer.get("added") or []]
+
+    async def check(self) -> dict:
+        """Ask the sheet's script which version it is (a request with no rows; nothing is written): the Supreme
+        dashboard's "Check the sheet" after a new script was pasted. The status, with the error if it failed."""
+        if not self.enabled:
+            return dict(self.status)
+        try:
+            await asyncio.to_thread(self._post, [])
+            self.status.update(last_ok_at=utcnow_iso(), last_error=None)
+            self._save_offset(self._offset())  # keeps what the script said (its version, the sheet's address)
+        except Exception as exc:  # noqa: BLE001 - unreachable or refused: said on the dashboard
+            self.status["last_error"] = f"{type(exc).__name__}: {exc}"
+        if self._wake is not None:
+            self._wake.set()  # anything waiting goes now
+        return dict(self.status)
 
     async def send_pending(self) -> int:
         """Deliver what is waiting, in batches; the number delivered. Raises on the first failure, leaving the cursor

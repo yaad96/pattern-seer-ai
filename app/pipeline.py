@@ -306,6 +306,7 @@ class JobManager:
         self._prep_tasks: set[asyncio.Task] = set()  # prepare_downloads; not in _running, so retries are not blocked
         self._vector_locks: dict[tuple[str, int, str], asyncio.Lock] = {}
         self._opened: dict[str, float] = {}  # job id -> when get() last gave it out (monotonic), for the clean-up
+        self._download_states: dict[str, dict] = {}  # the downloads box: a download's key -> how far its files are
         self._low_disk_warned = -math.inf  # when the clean-up last warned that it has nothing left to delete
         # every paid call in one append-only file, which outlives a deleted job (the admin dashboard; app/usage.py)
         self.usage_ledger = store.root.parent / usage.LEDGER
@@ -1915,6 +1916,101 @@ class JobManager:
             eps_bytes=len(files["eps"]),
             pdf_bytes=len(files["pdf"]),
         )
+
+    # ------------------------------------------------------------------
+    # the downloads box (2026-11-24): a download's files are made first, and the page shows how far that is
+    # ------------------------------------------------------------------
+
+    def start_download(self, job_id: str, kind: str, *, variant: int = 0, preset: str = "", size: str = "") -> dict:
+        """Make the files a download needs, in the background, through the same calls and locks as the buttons and
+        the prepared downloads; the page asks download_state() how far it is, then lets the browser fetch the file.
+        `kind`: "png" (one image's PNG), "export" (one image's EPS/SVG/PDF at `preset`), "eps-zip" (every panel's EPS
+        at `preset`), "png-zip" (every panel's PNG at `size`). Asked again while it runs, it answers the same one.
+        One step per file, those already there counted as done: {"key", "done", "total", "label" (the part being
+        made), "ready", "error"}."""
+        job = self.get(job_id)
+        if job is None:
+            raise JobError("Job not found.", 404)
+
+        def png(v: VariantInfo) -> tuple:
+            return v.panel or "image", self.store.file_path(job_id, v.png or "") is not None, lambda: self._download_png(job_id, v)
+
+        def export(v: VariantInfo) -> tuple:
+            req = VectorizeRequest(preset=preset or PREPARED_PRESET)
+            return (v.panel or "image", self._cached(job_id, v.vectors.get(req.preset)),
+                    lambda: self.vectorize(job_id, v.index, req))
+
+        parts: list[tuple] = []  # (the part's name, whether its file is there already, how to make it)
+        if kind in ("png", "export"):
+            if variant < 1 or variant > len(job.variants):
+                raise JobError("Variant not found.", 404)
+            v = job.variants[variant - 1]
+            if v.status != "succeeded":
+                raise JobError("This variant has no image yet.", 409)
+            parts.append(png(v) if kind == "png" else export(v))
+        elif kind in ("eps-zip", "png-zip"):
+            panels = [v for v in job.variants if v.panel]
+            if not panels:
+                raise JobError("This job has no production panels.", 409)
+            if any(v.status != "succeeded" for v in panels):
+                raise JobError("Not all panels are ready yet.", 409)
+            if kind == "eps-zip":
+                parts += [export(v) for v in panels]
+            elif size != "original":  # the model's own images are always there
+                parts += [png(v) for v in panels]
+        else:
+            raise JobError("Unknown download.", 422)
+        key = f"{job_id}|{kind}|{variant}|{preset}|{size}"
+        state = self._download_states.get(key)
+        if state is not None and not state["ready"] and not state["error"]:
+            return self._download_view(state)  # under way: the same one, not a second making
+        now = time.monotonic()
+        ended = [k for k, st in self._download_states.items() if (st["ready"] or st["error"]) and now - st["at"] > 3600]
+        for old in ended:  # forgotten an hour after they ended
+            del self._download_states[old]
+        steps = [(label, make) for label, there, make in parts if not there]
+        state = {"key": key, "done": len(parts) - len(steps), "total": len(parts),
+                 "label": steps[0][0] if steps else "", "ready": not steps, "error": None, "at": now}
+        self._download_states[key] = state
+        if steps:
+            task = asyncio.create_task(self._run_download(state, steps), name=f"download-{job_id}")
+            self._prep_tasks.add(task)  # stopped with the server, like the prepared downloads
+            task.add_done_callback(self._prep_tasks.discard)
+        return self._download_view(state)
+
+    def download_state(self, job_id: str, key: str) -> dict | None:
+        """How far a download started with start_download() is; None when this server doesn't know it (it restarted
+        since: the page starts it again, and what is already made is not made twice)."""
+        state = self._download_states.get(key) if key.startswith(f"{job_id}|") else None
+        return self._download_view(state) if state is not None else None
+
+    @staticmethod
+    def _download_view(state: dict) -> dict:
+        return {name: state[name] for name in ("key", "done", "total", "label", "ready", "error")}
+
+    async def _run_download(self, state: dict, steps: list) -> None:
+        try:
+            for label, make in steps:
+                state["label"] = label
+                await make()
+                state["done"] += 1
+            state["ready"] = True
+        except asyncio.CancelledError:
+            state["error"] = "The server restarted while the file was being made. Please try again."
+            raise
+        except JobError as exc:
+            state["error"] = str(exc)
+        except Exception:  # noqa: BLE001 - the page says so and offers to try again
+            log.exception("download %s: making its files failed", state["key"])
+            state["error"] = "The file could not be made. Please try again."
+        finally:
+            state["at"] = time.monotonic()
+
+    async def _download_png(self, job_id: str, variant: VariantInfo) -> None:
+        """A PNG download's file: a panel's print PNG is made when it isn't there; any other PNG is there already."""
+        name = variant.png or ""
+        if not await self.ensure_print_png(job_id, name) and self.store.file_path(job_id, name) is None:
+            raise JobError("The PNG for this variant is missing on disk.", 404)
 
     # ------------------------------------------------------------------
     # clean-up of the ready-made downloads (cleanup_days, cleanup_min_free_gb)

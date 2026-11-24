@@ -1,6 +1,6 @@
 /**
- * What a client's jobs cost in our tokens, as a table (2026-11-23): shared by the partner's client dashboard
- * (clientboard.js, English) and a client page's "Customer dashboard" tab (customerboard.js, Bangla through
+ * What a client's jobs cost in our tokens, as a table (2026-11-23): shared by the Partner and Supreme dashboards
+ * (boards.js, English) and a client page's "Customer dashboard" tab (customerboard.js, Bangla through
  * i18n.js, which only the client page loads). Each job shows the tokens of each part (a failed part is free); a Design chat is one row whose
  * "Messages (N)" opens its messages with the client's words and the designer's reply.
  */
@@ -59,7 +59,7 @@ function chatStatus(statuses) {
 
 /** A Design chat: one row with its tokens in all, which opens its messages (oldest first) with the client's words,
  * the designer's reply and each message's tokens. */
-function chatRows(group, openChats) {
+function chatRows(group, openChats, client) {
   const msgs = [...group].sort((a, b) => a.id.localeCompare(b.id)); // oldest first (ids sort by creation, to the ms)
   const first = msgs[0];
   const last = msgs[msgs.length - 1];
@@ -75,9 +75,11 @@ function chatRows(group, openChats) {
     h('td', { class: 'nowrap' }, fmtDateTime(first.created_at),
       fmtDateTime(last.created_at) !== fmtDateTime(first.created_at)
         ? h('div', { class: 'dash-sub' }, `to ${fmtDateTime(last.created_at)}`) : null),
+    client ? h('td', { 'data-no-translate': '' }, first.client_name || first.client || '') : null,
     h('td', null, picture(shown)),
     h('td', null,
-      h('div', { class: 'dash-chat-title', 'data-no-translate': '' }, named ? named.title : 'Design chat'),
+      // the AI designer's title stays as written; without one, the plain name (in Bangla on a client's page)
+      h('div', { class: 'dash-chat-title', 'data-no-translate': named ? '' : null }, named ? named.title : 'Design chat'),
       h('div', { class: 'cb-parts' },
         h('span', { class: 'cb-part' }, h('span', null, `${fmtInt(msgs.length)} design ${msgs.length === 1 ? 'message' : 'messages'}`)),
         failed ? h('span', { class: ['cb-part', 'is-failed'] }, h('span', null, `${fmtInt(failed)} failed, not charged`)) : null)),
@@ -85,7 +87,7 @@ function chatRows(group, openChats) {
       running ? h('div', { class: 'dash-sub' }, 'More when the running one finishes') : null),
     h('td', null, statusBadge(chatStatus(msgs.map((j) => j.status)))),
     h('td', { class: 'nowrap' }, toggle));
-  const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: '6' }, open ? messagesTable(msgs) : null));
+  const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: client ? '7' : '6' }, open ? messagesTable(msgs) : null));
   toggle.addEventListener('click', () => {
     const now = !openChats.has(first.chat);
     if (now) openChats.add(first.chat);
@@ -116,7 +118,7 @@ function messagesTable(msgs) {
       h('td', null, statusBadge(job.status))))));
 }
 
-function jobRow(job, ids) {
+function jobRow(job, ids, client) {
   const thumb = picture(job);
   const parts = job.running
     ? planned(job).map((item) => h('span', { class: 'cb-part' }, h('span', null, TOKEN_ITEMS[item] || 'Image')))
@@ -125,6 +127,7 @@ function jobRow(job, ids) {
       ...job.failed.map((item) => part(item, 0, true))];
   return h('tr', null,
     h('td', { class: 'nowrap' }, fmtDateTime(job.created_at), ids ? h('div', { class: 'dash-id', 'data-no-translate': '' }, job.id) : null),
+    client ? h('td', { 'data-no-translate': '' }, job.client_name || job.client || '') : null,
     h('td', null, thumb),
     h('td', null, h('div', { class: 'cb-parts' }, parts.length ? parts : h('span', { class: 'muted' }, '–'))),
     h('td', { class: 'num' }, job.running ? h('span', { class: 'muted' }, 'Charged when it finishes') : h('strong', null, fmtInt(job.tokens))),
@@ -134,13 +137,14 @@ function jobRow(job, ids) {
 
 
 /** The jobs (newest first) as a table, or null when there are none. openChats: the chats kept open (a Set of chat
- * ids, kept by the page across reloads); ids: show each job's id (the partner's page). */
-export function jobsTable(jobs, { openChats, ids = false }) {
+ * ids, kept by the page across reloads); ids: show each job's id (the dashboards); client: a Client column (the
+ * dashboards' Jobs tab, which lists every client's jobs: each job then has client_name). */
+export function jobsTable(jobs, { openChats, ids = false, client = false }) {
   if (!jobs.length) return null;
   return h('table', { class: 'dash-table' },
-    h('thead', null, h('tr', null, ['Time', 'Picture', 'What was made', 'Tokens', 'Status', '']
-      .map((t, i) => h('th', { class: i === 3 ? 'num' : null }, t)))),
-    byChat(jobs).map((g) => (isChat(g[0]) ? chatRows(g, openChats) : h('tbody', null, jobRow(g[0], ids)))));
+    h('thead', null, h('tr', null, ['Time', client ? 'Client' : null, 'Picture', 'What was made', 'Tokens', 'Status', '']
+      .filter((t) => t !== null).map((t) => h('th', { class: t === 'Tokens' ? 'num' : null }, t)))),
+    byChat(jobs).map((g) => (isChat(g[0]) ? chatRows(g, openChats, client) : h('tbody', null, jobRow(g[0], ids, client)))));
 }
 
 /** The token prices, one pill per item ("Back (same as front) free"). */

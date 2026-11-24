@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="en" data-app="clientboard">
+<html lang="en" data-app="board">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex">
-<title>Client dashboard</title>
+<title>Supreme dashboard</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232f5bea'/%3E%3Cpath d='M9.9 5.7C10.46 6.61 11.16 7.1 12 7.1S13.54 6.61 14.1 5.7L17.6 7.1 19.35 10.25 16.9 11.65 16.2 10.95V18.3H7.8V10.95L7.1 11.65 4.65 10.25 6.4 7.1Z' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/css/app.css">
-<script type="module" src="/static/js/clientboard.js"></script>
+<script type="module" src="/static/js/supremeboard.js"></script>
 </head>
 <body>
-<!-- The client dashboard (/client-dashboard, 2026-11-23; static/js/clientboard.js): each client's tokens, for the
-     partner login and the studio login. The icons are the few of index.html's sprite that it uses. -->
+<!-- The Supreme dashboard (/supreme-dashboard; static/js/supremeboard.js with boards.js and dashboard.js): the head
+     admin's own, with everything: the Partner dashboard's tabs plus the LLM costs and the settings. -->
 <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
   <symbol id="i-jersey-fill" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M9.9 5.7C10.46 6.61 11.16 7.1 12 7.1S13.54 6.61 14.1 5.7L17.6 7.1 19.35 10.25 16.9 11.65 16.2 10.95V18.3H7.8V10.95L7.1 11.65 4.65 10.25 6.4 7.1Z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
@@ -27,6 +27,9 @@
   <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M11 8v6M8 11h6"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4 20h16"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-9 9M18 14v5H5V6h5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
 </svg>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="app-header">

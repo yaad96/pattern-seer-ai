@@ -1,12 +1,14 @@
 /**
- * Dashboard tab (studio page, since 2026-11-08): what was made each day and what it cost, from GET /api/admin/usage
+ * The Supreme dashboard's LLM Costs and Jobs tabs and its site switch (supremeboard.js; until 2026-11-24 the "Dashboard"
+ * tab of the main page, since 2026-11-08): what was made each day and what it cost, from GET /api/admin/usage
  * (app/usage.py): every job and every paid API call with its tokens and cost, jobs deleted in History included (the
  * usage ledger). Days are UTC by default, like OpenAI's bill, or this computer's time. A job retried on a later day
  * appears on both days, each row with that day's calls, so a day's total is exactly what was spent that day.
  * Since 2026-11-23 also our own tokens (app/tokens.py: what each client job cost its client's purse) beside the real
  * costs, a "By client" table, and the other machines' jobs (the Mac's, sent with app/sync.py) with a machine filter.
- * The Dashboard is in English (the owner's choice, 2026-11-23: an internal page): its panel, toasts and dialogs are
- * marked untranslated, while the rest of the studio page stays Bangla.
+ * In English (the owner's choice, 2026-11-23: an internal page); the Supreme dashboard doesn't load the Bangla layer.
+ * initDashboard() gives the parts back as elements, which supremeboard.js puts in its tabs: `costs` (tiles, cost per
+ * day, by output type), `jobs` (every job day by day), `site` (the switch), and `filters`, one bar for both tabs.
  */
 import { api, fileUrl } from './api.js';
 import { h, icon, replace, fmtDateTime, fmtInt, fmtSeconds, fmtUsd, storage } from './dom.js';
@@ -57,7 +59,7 @@ function typeOf(job) {
 }
 
 /** Tokens, images and money of a set of calls. */
-function sum(calls) {
+export function sum(calls) {
   const t = { cost: 0, uncosted: 0, ai: 0, failed: 0, image: 0, designer: 0, designerCalls: 0, input: 0, output: 0 };
   for (const c of calls) {
     const cost = typeof c.cost_usd === 'number' ? c.cost_usd : null;
@@ -83,8 +85,7 @@ function addInto(total, part) {
   return total;
 }
 
-export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
-  root.setAttribute('data-no-translate', ''); // English (see above)
+export function initDashboard({ onOpenJob, onSiteChange, onReport } = {}) {
   const say = (message, kind) => toast(message, { kind, raw: true });
   const saved = storage.get(PREFS_KEY, {}) || {};
   const prefs = { range: '30', zone: 'utc', who: 'all', type: 'all', machine: 'all', ...saved };
@@ -107,8 +108,6 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
     ['client', 'Client logins']], false); // a client page's own login (app/clients.py): job.client
   const typeSel = h('select', { class: 'select', 'aria-label': 'Output type' });
   typeSel.addEventListener('change', () => { prefs.type = typeSel.value; savePrefs(); render(); });
-  const refreshBtn = h('button', { type: 'button', class: 'btn btn-sm' }, icon('refresh'), 'Refresh');
-  refreshBtn.addEventListener('click', () => load());
   const csvBtn = h('button', { type: 'button', class: 'btn btn-sm' }, icon('download'), 'Download CSV');
   csvBtn.addEventListener('click', () => downloadCsv());
   // the Mac: send its Dashboard to the online server now (it also does so by itself every few minutes)
@@ -117,15 +116,14 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
   const machineBox = h('div', { class: 'dash-machine' }); // the machine filter, when there are jobs from more than one
   const syncNote = h('p', { class: 'hint', hidden: true });
   const note = h('p', { class: 'hint' });
-  const body = h('div', { class: 'dash-body' });
+  const body = h('div', { class: 'dash-body' }); // LLM Costs: the tiles, cost per day, by output type
+  const jobsBody = h('div', { class: 'dash-body' }); // Jobs: every job, day by day
   const siteBox = h('section', { class: 'card dash-site' }, h('div', { class: 'card-body' }, loadingRow('Loading…')));
-
-  replace(root,
-    h('div', { class: 'history-toolbar' }, h('h2', null, 'Dashboard'), h('span', { class: 'spacer' }), syncBtn, refreshBtn, csvBtn),
-    siteBox,
-    h('div', { class: 'dash-filters' }, range.el, zone.el, who.el, machineBox,
-      h('label', { class: 'dash-type' }, h('span', { class: 'field-label' }, 'Output type'), typeSel)),
-    syncNote, note, body);
+  // one filter bar for both tabs: supremeboard.js moves it into the one that is open
+  const filters = h('div', { class: 'dash-filters' }, range.el, zone.el, who.el, machineBox,
+    h('label', { class: 'dash-type' }, h('span', { class: 'field-label' }, 'Output type'), typeSel));
+  const costs = h('div', null, syncNote, note, body);
+  const jobs = h('div', null, jobsBody);
 
   /* ---------- the site switch (app/site_switch.py, 2026-11-11): close the site for everyone but the studio login,
      who then get a plain "page not found" (404), as if the site weren't there; open it again here ---------- */
@@ -222,15 +220,22 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
   async function load() {
     const mine = ++seq;
     loading = true;
-    if (!report) replace(body, loadingRow('Loading…'));
+    if (!report) {
+      replace(body, loadingRow('Loading…'));
+      replace(jobsBody, loadingRow('Loading…'));
+    }
     try {
       const days = Number(prefs.range);
       const data = await api.adminUsage(days ? days + 1 : 0); // a day more, so a whole local day is covered
       if (mine !== seq) return;
       report = data;
       render();
+      if (onReport) onReport(report);
     } catch (err) {
-      if (mine === seq) replace(body, callout('error', err.message));
+      if (mine === seq) {
+        replace(body, callout('error', err.message));
+        replace(jobsBody, callout('error', err.message));
+      }
     } finally {
       if (mine === seq) loading = false;
     }
@@ -298,10 +303,12 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
     const { rows, cutoff } = rowsFor();
     note.textContent = report.floor ? `Shows jobs from ${dayLabel(dayKey(report.floor, prefs.zone))} on.` : '';
     if (!rows.length) {
-      replace(body, h('div', { class: 'empty' },
+      const empty = () => h('div', { class: 'empty' },
         h('div', { class: 'empty-icon' }, icon('chart')),
         h('p', { class: 'empty-title' }, 'No jobs in this period'),
-        h('p', { class: 'empty-text' }, 'Jobs made on this server appear here with their tokens and costs.')));
+        h('p', { class: 'empty-text' }, 'Jobs made on this server appear here with their tokens and costs.'));
+      replace(body, empty());
+      replace(jobsBody, empty());
       return;
     }
 
@@ -342,9 +349,8 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
     replace(body,
       tiles(total, callTotals),
       chart(byDay, cutoff),
-      tokensOn() ? clientTable(rows) : null,
-      typeTable(byType),
-      days(rows));
+      typeTable(byType));
+    replace(jobsBody, days(rows));
   }
 
   function tile(label, value, sub) {
@@ -723,37 +729,6 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
     return h('span', { title: parts.join(' · ') }, fmtInt(job.tokens)); // " · " parts translate one by one
   }
 
-  /** Each client in the period: jobs, our tokens and the real cost behind them, and its purse now. */
-  function clientTable(rows) {
-    const by = new Map((report.tokens.clients || []).map((c) => [c.slug, { ...c, jobs: 0, tokens: 0, cost: 0 }]));
-    for (const r of rows) {
-      if (!r.job.client || !local(r)) continue; // the balances are this server's: so are the tokens beside them
-      const row = by.get(r.job.client) || { slug: r.job.client, name: r.job.client, balance: null, jobs: 0, tokens: 0, cost: 0 };
-      row.cost += sum(r.calls).cost;
-      if (r.made) {
-        row.jobs += 1;
-        row.tokens += r.job.tokens || 0;
-      }
-      by.set(r.job.client, row);
-    }
-    const list = [...by.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
-    if (!list.length) return null;
-    return h('section', { class: 'card' },
-      h('div', { class: 'card-header' }, h('h3', { class: 'card-title' }, 'By client'),
-        h('a', { class: 'btn btn-sm btn-ghost', href: '/client-dashboard' }, 'Client dashboard')),
-      h('div', { class: 'card-body dash-scroll' }, h('table', { class: 'dash-table' },
-        h('thead', null, h('tr', null, ['Client', 'Jobs', 'Our tokens', 'Taka received', 'Real cost', 'Real cost per 100 tokens', 'Balance now']
-          .map((t, i) => h('th', { class: i ? 'num' : null }, t)))),
-        h('tbody', null, list.map((c) => h('tr', null,
-          h('td', { 'data-no-translate': '' }, c.slug ? h('a', { href: `/client-dashboard#client=${c.slug}` }, c.name) : c.name),
-          h('td', { class: 'num' }, fmtInt(c.jobs)),
-          h('td', { class: 'num' }, fmtInt(c.tokens)),
-          h('td', { class: 'num' }, c.taka ? `৳${fmtInt(c.taka)}` : '–'), // what the client paid us in the period
-          h('td', { class: 'num' }, fmtUsd(c.cost) || '$0'),
-          h('td', { class: 'num' }, c.tokens ? money((c.cost / c.tokens) * 100) : '–'),
-          h('td', { class: 'num' }, c.balance === null ? '–' : fmtInt(c.balance))))))));
-  }
-
   /* ---------- CSV: one row per paid call in the period and filters shown ---------- */
   function downloadCsv() {
     if (!report) return;
@@ -795,9 +770,12 @@ export function initDashboard(root, { onOpenJob, onSiteChange } = {}) {
   }
 
   return {
-    activate() {
+    costs, jobs, filters, site: siteBox, csvBtn, syncBtn,
+    /** Read the report (and the site switch) again. */
+    reload() {
       loadSite();
       if (!loading) load();
     },
+    report: () => report,
   };
 }

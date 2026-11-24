@@ -126,6 +126,7 @@ export function showDialog(dlg, onClose) {
   document.body.appendChild(dlg);
   if (typeof dlg.showModal === 'function') dlg.showModal();
   else dlg.setAttribute('open', '');
+  document.dispatchEvent(new Event('jhs:dialog')); // the downloads box moves into the dialog on top (downloads.js)
   return dlg;
 }
 
@@ -156,8 +157,9 @@ export function confirmDialog({ title, message, confirmLabel, danger, raw = fals
   });
 }
 
-/** Full-screen image viewer; click or the button toggles fit / actual size. */
-export function openLightbox({ src, alt, caption, downloadUrl, downloadLabel }) {
+/** Full-screen image viewer; click or the button toggles fit / actual size. `download(link)`: lets the caller
+ * take over the download link's click (the downloads box, for a file that may have to be made first). */
+export function openLightbox({ src, alt, caption, downloadUrl, downloadLabel, download }) {
   const titleId = uid('lightbox-title');
   const dlg = h('dialog', { class: 'lightbox', 'aria-labelledby': titleId });
   const img = h('img', { src, alt: alt || '', decoding: 'async' });
@@ -179,11 +181,14 @@ export function openLightbox({ src, alt, caption, downloadUrl, downloadLabel }) 
   }
   zoomBtn.addEventListener('click', () => toggleZoom());
   img.addEventListener('click', toggleZoom);
+  const downloadLink = downloadUrl
+    ? h('a', { class: 'btn btn-sm btn-on-dark', href: downloadUrl, download: '' }, icon('download'), downloadLabel || 'Download') : null;
+  if (downloadLink && download) download(downloadLink);
   dlg.appendChild(h('div', { class: 'lightbox-panel' },
     h('div', { class: 'lightbox-bar' },
       h('h2', { class: 'lightbox-caption', id: titleId }, caption || alt || 'Image'),
       zoomBtn,
-      downloadUrl ? h('a', { class: 'btn btn-sm btn-on-dark', href: downloadUrl, download: '' }, icon('download'), downloadLabel || 'Download') : null,
+      downloadLink,
       h('button', { type: 'button', class: 'btn btn-sm btn-icon btn-on-dark', 'aria-label': 'Close viewer', onClick: () => closeDialog(dlg) }, icon('x'))),
     stage));
   showDialog(dlg);

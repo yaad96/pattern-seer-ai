@@ -10,7 +10,9 @@ charged and nothing is blocked.
   failed attempts (checked against the bill on 2026-11-23), and "generate again" is charged when it works.
 - Before a job starts its price is held, so two quick jobs can't overspend a purse. A job the purse can't cover is
   refused (HTTP 402). Holds live in memory: a restart drops them along with the jobs it interrupts.
-- Only the studio login adds tokens (or takes them back, never more than the purse has free), always with a note.
+- The head admin adds tokens or takes them back (never more than the purse has free), always with a note; since
+  2026-11-24 the partner login can add too (not take back), and a bKash payment that is approved adds its tokens
+  (app/payments.py).
 - Every change goes to <output_dir>/token_ledger.jsonl, append-only and never rewritten, with the balance after it.
   A balance is the sum of that file. Deleting a job in History doesn't touch its charges.
 
@@ -222,11 +224,13 @@ class TokenBook:
         return charged
 
     def add(self, client: str, tokens: int, note: str, by: str, taka: int | None = None,
-            request_id: str | None = None) -> dict:
-        """Tokens added to (or, when negative, taken from) `client`'s purse by the studio, with a note, and with a
-        top-up what the client paid for them (`taka`, whole taka; None = not recorded, 0 = free tokens).
+            request_id: str | None = None, extra: dict | None = None) -> dict:
+        """Tokens added to (or, when negative, taken from) `client`'s purse by `by` ("studio" = the head admin,
+        "partner"), with a note, and with a top-up what the client paid for them (`taka`, whole taka; None = not
+        recorded, 0 = free tokens).
         `request_id`: the form's own id, kept on the line; the same id again returns that line and adds nothing (the
-        answer to the first press was lost: 2026-11-23 review CHAOS-4)."""
+        answer to the first press was lost: 2026-11-23 review CHAOS-4). An approved bKash payment uses "pay-<id>".
+        `extra`: more to keep on the line (a bKash payment's id and TrxID)."""
         done = self.by_request(request_id)
         if done is not None:
             if done["client"] != client or done["tokens"] != tokens:
@@ -251,6 +255,8 @@ class TokenBook:
             entry["taka"] = taka
         if request_id:
             entry["request_id"] = request_id
+        for key, value in (extra or {}).items():
+            entry.setdefault(key, value)
         return self._append(entry)
 
     def _append(self, entry: dict) -> dict:
