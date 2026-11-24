@@ -44,7 +44,8 @@ export function withoutModel(stage) {
  * their status changes, so polling never resets sliders or open panels).
  * options: compare (show before/after vs. the job's first input), onRefine(job, index),
  * activeParent ({jobId, variant}), compact, vectorsOpen, onRetry(job, variant) (a failed Recreate image: generate it
- * again; resolves once the server has accepted), customer (the client demo page: no model names or costs).
+ * again; resolves once the server has accepted), customer (the client demo page: no model names or costs), noCost
+ * (the Partner dashboard's History: everything but what an image cost at the API).
  */
 export function createResults(job, options) {
   const opts = options || {};
@@ -245,7 +246,7 @@ function createVariantCard(index, opts, label) {
   }
 
   function renderFailed(job, v) {
-    const cost = opts.customer ? [] : imageCost(job, v);  // a failed call can still have been billed
+    const cost = opts.customer || opts.noCost ? [] : imageCost(job, v);  // a failed call can still have been billed
     appendAll(el, [
       h('div', { class: 'variant-media variant-error' }, icon('alert'), h('strong', null, v.panel ? 'This panel failed' : 'This image failed'),
         h('p', null, opts.customer ? customerError(v.error) : v.error || 'The image model returned no image.'),
@@ -333,7 +334,7 @@ function createVariantCard(index, opts, label) {
     if (upscaled) meta.push(`upscaled from ${fmtDims(v.raw_width, v.raw_height)}`);
     if (job.model && !opts.customer) meta.push(modelLabel(job.provider, job.model));
     if (v.latency_s) meta.push(fmtSeconds(v.latency_s));
-    if (!opts.customer) meta.push(...imageCost(job, v));
+    if (!opts.customer && !opts.noCost) meta.push(...imageCost(job, v));
 
     if (opts.onRefine && job.kind === 'design') {
       refineBtn = h('button', { type: 'button', class: 'btn btn-sm btn-wrap', 'aria-pressed': 'false', onClick: () => opts.onRefine(job, index) },

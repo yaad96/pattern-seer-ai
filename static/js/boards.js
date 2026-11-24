@@ -567,7 +567,7 @@ export function startBoard(options) {
         tile('Taka received', taka(c.taka), h('span', null, periodText())),
         k ? tile('Real cost · only you', money(k.cost), h('span', null, k.tokens ? `${money((k.cost / k.tokens) * 100)} per 100 tokens` : periodText()), 'only-you')
           : tile('Jobs', fmtInt(made), h('span', null, periodText()))),
-      entryCard(detail.entry),
+      entryCard(c, detail.entry),
       card('Jobs', jobsBody, { note: periodText(), bodyClass: 'dash-scroll' }),
       card('bKash payments', detail.payments.length ? paysTable(detail.payments, { withClient: false })
         : h('p', { class: 'hint' }, 'This client has sent no bKash payment yet.'),
@@ -586,19 +586,74 @@ export function startBoard(options) {
   const copyBtn = (text, what) => h('button', { type: 'button', class: 'btn btn-sm', onClick: () => copy(text, what) }, icon('copy'), 'Copy');
   const codeRow = (label, text, what) => [h('dt', null, label), h('dd', { class: 'entry-value' }, h('code', { class: 'pay-code' }, text), copyBtn(text, what))];
 
-  /** How a client gets in: the link, the login, the phone number. The password is the head admin's to see here (the
-   * server sends it to no one else); the partner sees it when it makes the customer. */
-  function entryCard(entry) {
+  /** How a client gets in: the link, the login with its password, the phone number; with Edit. For the head admin
+   * and the partner alike (the owner, 2026-11-24: "for partner dashboard, he should also see the password and edit"). */
+  function entryCard(c, entry) {
     if (!entry) return null;
     const link = `${window.location.origin}${entry.path}`;
+    const editBtn = h('button', { type: 'button', class: 'btn btn-sm', onClick: () => openEdit(c, entry) }, 'Edit');
     return card('Entry point', h('dl', { class: 'spec-list entry-list' },
       h('dt', null, 'Link'), h('dd', { class: 'entry-value' }, h('a', { href: entry.path, target: '_blank', rel: 'noopener' }, link), copyBtn(link, 'The link')),
       entry.username ? codeRow('Username', entry.username, 'The username') : [h('dt', null, 'Login'), h('dd', null, 'No login of its own: only the head admin can open the page.')],
-      entry.password !== undefined ? codeRow('Password', entry.password, 'The password')
-        : entry.username ? [h('dt', null, 'Password'), h('dd', { class: 'muted' }, 'Shown when the customer was made. The head admin can see it on the Supreme dashboard.')] : null,
+      entry.password ? codeRow('Password', entry.password, 'The password') : null,
       h('dt', null, 'Phone'), h('dd', null, entry.phone ? h('a', { href: `tel:${entry.phone.replace(/[^0-9+]/g, '')}` }, entry.phone) : '–'),
       entry.made_at ? [h('dt', null, 'Made'), h('dd', null, `${fmtDateTime(entry.made_at)} by the ${who(entry.made_by).toLowerCase()}`)] : null),
-    { note: 'What the customer needs to get in.' });
+    { note: 'What the customer needs to get in.', actions: editBtn });
+  }
+
+  /** A password to read out or type on a phone, like the builder's: three groups of four, no look-alike letters. */
+  function newPassword() {
+    const letters = 'abcdefghjkmnpqrstuvwxyz23456789';
+    const picks = window.crypto.getRandomValues(new Uint32Array(12));
+    const group = (i) => Array.from(picks.slice(i, i + 4), (n) => letters[n % letters.length]).join('');
+    return [group(0), group(4), group(8)].join('-');
+  }
+
+  /** Edit a client's name, phone and password. Only what was changed is sent. */
+  function openEdit(c, entry) {
+    const nameIn = inputEl({ maxlength: '80', value: c.name, autocomplete: 'off' });
+    const phoneIn = inputEl({ type: 'tel', maxlength: '24', value: entry.phone || '', placeholder: '01XXXXXXXXX', autocomplete: 'off' });
+    const passIn = inputEl({ maxlength: '64', value: entry.password || '', spellcheck: 'false', autocapitalize: 'none', autocomplete: 'off', class: 'input builder-slug' });
+    const genBtn = h('button', { type: 'button', class: 'btn btn-sm' }, icon('refresh'), 'Make a new one');
+    genBtn.addEventListener('click', () => {
+      passIn.value = newPassword();
+      passIn.focus();
+    });
+    const saveBtn = h('button', { type: 'button', class: 'btn btn-primary' }, 'Save');
+    const cancelBtn = h('button', { type: 'button', class: 'btn' }, 'Cancel');
+    const dlg = modal({
+      title: `Edit ${c.name}`,
+      className: 'modal-sm edit-dialog',
+      body: h('div', { class: 'builder' },
+        field('Customer name', nameIn), field('Phone number', phoneIn),
+        entry.username ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Password'),
+          h('div', { class: 'entry-value' }, passIn, genBtn),
+          h('p', { class: 'hint' }, `For the username ${entry.username}. 6 to 64 characters, no spaces. After a change the customer has to sign in again with the new password.`)) : null,
+        h('p', { class: 'hint' }, 'The link and the username stay as they are.')),
+      footer: [cancelBtn, saveBtn],
+    });
+    cancelBtn.addEventListener('click', () => closeDialog(dlg));
+    saveBtn.addEventListener('click', async () => {
+      const changes = {};
+      if (nameIn.value.trim() !== c.name) changes.name = nameIn.value;
+      if (phoneIn.value.trim() !== (entry.phone || '')) changes.phone = phoneIn.value;
+      if (entry.username && passIn.value !== (entry.password || '')) changes.password = passIn.value;
+      if (!Object.keys(changes).length) {
+        closeDialog(dlg);
+        return;
+      }
+      setBusy(saveBtn, true, 'Saving…');
+      try {
+        const res = await api.customerEdit(c.slug, changes);
+        closeDialog(dlg);
+        toast(res.changed.includes('password') ? 'Saved. The customer has to sign in again with the new password.' : 'Saved.', { kind: 'success' });
+        await load();
+      } catch (err) {
+        toast(err.message, { kind: 'error' });
+        if (saveBtn.isConnected) setBusy(saveBtn, false);
+      }
+    });
+    nameIn.focus();
   }
 
   /** "Add a customer": name, phone, the link's name (suggested, editable) and the logo; a preview with the colours
@@ -721,9 +776,7 @@ export function startBoard(options) {
           codeRow('Username', c.username, 'The username'), codeRow('Password', c.password, 'The password'),
           h('dt', null, 'Phone'), h('dd', null, c.phone),
           h('dt', null, 'Tokens'), h('dd', null, res.tokens ? `${fmtInt(res.tokens)} welcome tokens added` : 'None added (tokens are off, or the welcome tokens are set to 0)')),
-        callout(overview.can_take_back ? 'info' : 'warning', overview.can_take_back
-          ? 'You can see this login again on the customer’s page here, under Clients.'
-          : 'Copy the password now: after you close this, only the head admin can see it again.'),
+        callout('info', 'You can see and change this login later on the customer’s page here, under Clients.'),
         h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'A message to send the customer'), area,
           h('div', null, h('button', { type: 'button', class: 'btn btn-sm', onClick: () => copy(message, 'The message') }, icon('copy'), 'Copy the message')))));
       replace(dlg.querySelector('.modal-footer'), done);

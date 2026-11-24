@@ -21,7 +21,7 @@ import tempfile
 import time
 import zipfile
 from collections import OrderedDict
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -381,7 +381,10 @@ class JobManager:
         job.updated_at = utcnow_iso()
         self.store.save(job)
 
-    def list(self, *, limit: int = 60, kind: JobKind | None = None, session_id: str | None = None) -> list[Job]:
+    def list(self, *, limit: int = 60, kind: JobKind | None = None, session_id: str | None = None,
+             match: Callable[[Job], bool] | None = None) -> list[Job]:
+        """The newest `limit` jobs, newest first; `match`: only the jobs a login may see (main.py: a client's own, or
+        for the partner every client's)."""
         out: list[Job] = []
         for job_id in self.store.list_ids():
             job = self._cache.get(job_id) or self.store.load(job_id)
@@ -390,6 +393,8 @@ class JobManager:
             if kind is not None and job.kind != kind:
                 continue
             if session_id is not None and job.session_id != session_id:
+                continue
+            if match is not None and not match(job):
                 continue
             out.append(job)
             if len(out) >= limit:

@@ -12,7 +12,12 @@ form on the dashboards, by the head admin or the partner, at once and without a 
 
 What the builder makes lives in <output_dir>/clients/ (clients.json and the logo files, in the format of
 client_assets/, so app.clients reads both): it is the server's own data, which a deploy never touches. A client
-written by hand in client_assets/ keeps working as before; a slug used there can't be made again here."""
+written by hand in client_assets/ keeps working as before; a slug used there can't be made again here.
+
+A client's name, phone and password can be changed on the dashboards afterwards (the owner, 2026-11-24: "for partner
+dashboard, he should also see the password and edit"). The changes are kept apart, in <output_dir>/clients/edits.json,
+by slug, and laid over the client's entry when it is read: so a client written by hand in client_assets/ can be
+edited too, and a deploy (which copies client_assets/ from the Mac) never undoes an edit."""
 
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ import re
 import secrets
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -32,10 +37,13 @@ from PIL import Image, ImageOps
 
 from app.clients import CONFIG, HEX_RE, MAX_IMAGE_BYTES, ROLES, SLUG_RE, TEXT_LIMIT, ClientBrand, read_client
 from app.imaging.palette import dominant_colors
+from app.security import ClientLogin
 
 log = logging.getLogger(__name__)
 
 FOLDER = "clients"  # under the output folder
+EDITS = "edits.json"  # the changes made to clients on the dashboards: {slug: {name?, phone?, password?, edited_at, edited_by}}
+RESERVED_SLUGS = frozenset({"preview"})  # POST /api/clients/preview is the builder's own
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_PIXELS = 25_000_000  # a phone's photo of a logo is about 12 million; more would cost the small server its memory
 MAX_CUSTOMERS = 500
@@ -98,7 +106,7 @@ def slug_problem(slug: str, taken: set[str]) -> str | None:
     also the new login's username), in lower case."""
     if not SLUG_RE.fullmatch(slug or ""):
         return "Use small letters and digits only, 1 to 32, without spaces."
-    if slug in taken:
+    if slug in taken or slug in RESERVED_SLUGS:
         return "This link name is already in use. Choose another."
     return None
 
@@ -106,6 +114,15 @@ def slug_problem(slug: str, taken: set[str]) -> str | None:
 def new_password() -> str:
     """A password to read out or type on a phone: three groups of four letters and digits."""
     return "-".join("".join(secrets.choice(PASSWORD_LETTERS) for _ in range(4)) for _ in range(3))
+
+
+def clean_password(text: str) -> str:
+    """A password someone typed for a client on a dashboard: 6 to 64 characters, none of them a space or a control
+    character (it is read out and typed on phones)."""
+    password = text or ""
+    if not 6 <= len(password) <= 64 or any(ch.isspace() or not ch.isprintable() for ch in password):
+        raise CustomerError("The password must be 6 to 64 characters, without spaces.")
+    return password
 
 
 def clean_colors(raw: object) -> dict[str, str] | None:
@@ -269,3 +286,50 @@ def save(folder: Path, *, slug: str, name: str, phone: str, logo: Logo, password
             (folder / filename).unlink(missing_ok=True)
         raise
     return brand
+
+
+# ---------- changing a client afterwards ----------
+
+def read_edits(folder: Path) -> dict[str, dict]:
+    """The changes made to clients on the dashboards, by slug ({} when none, or when the file can't be read: the
+    clients then show as they were made, and the reason is logged)."""
+    try:
+        edits = json.loads((folder / EDITS).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        log.exception("customers: %s can't be read; the clients show as they were made", folder / EDITS)
+        return {}
+    return {slug: edit for slug, edit in edits.items() if isinstance(edit, dict)} if isinstance(edits, dict) else {}
+
+
+def apply_edit(brand: ClientBrand, edit: dict) -> ClientBrand:
+    """`brand` with the name, phone and password of `edit` laid over it (each only when the edit has it). The header
+    shows the new name when it showed the old one; a password needs the client to have a login."""
+    changes: dict = {}
+    name = edit.get("name")
+    if isinstance(name, str) and name and name != brand.name:
+        changes["name"] = name
+        if brand.wordmark == ((brand.name, "text"),):  # the header shows the name itself (not a styled wordmark)
+            changes["wordmark"] = ((name, "text"),)
+    if isinstance(edit.get("phone"), str):
+        changes["phone"] = edit["phone"]
+    password = edit.get("password")
+    if isinstance(password, str) and password:
+        if brand.login is None:
+            raise CustomerError("This customer has no login of its own, so there is no password to set.")
+        changes["login"] = ClientLogin(slug=brand.slug, username=brand.login.username, password=password)
+    return replace(brand, **changes) if changes else brand
+
+
+def save_edit(folder: Path, slug: str, changes: dict, by: str, at: str) -> None:
+    """Keep `changes` (name, phone, password: those given) for the client `slug`, on top of what was kept for it
+    before (worker thread; the caller holds the builder's lock)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(folder, 0o700)
+    except OSError:
+        pass
+    edits = read_edits(folder)
+    edits[slug] = {**edits.get(slug, {}), **changes, "edited_at": at, "edited_by": by}
+    _write(folder / EDITS, json.dumps(edits, ensure_ascii=False, indent=2).encode("utf-8"))

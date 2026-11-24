@@ -131,6 +131,13 @@ class PaySettingsRequest(BaseModel):
     packages: list[PayPackage] = Field(max_length=6)
 
 
+class CustomerEdit(BaseModel):
+    """What to change of a client on the dashboards (app/customers.py): only the fields sent."""
+    name: str | None = Field(None, max_length=200)
+    phone: str | None = Field(None, max_length=40)
+    password: str | None = Field(None, max_length=200)
+
+
 class DownloadRequest(BaseModel):
     """What the downloads box asks to be made ready (JobManager.start_download)."""
     kind: Literal["png", "export", "eps-zip", "png-zip"]
@@ -162,6 +169,9 @@ class JobSummary(BaseModel):
     cost_usd: float | None  # what the job's API calls cost; None = not recorded (jobs before 2026-11-03)
     uncosted_calls: int
     cost_partial: bool  # an older job with some calls recorded since (e.g. a retry)
+    client: str | None = None  # the client page whose own login made it
+    client_name: str | None = None  # that client's name (not sent to the client itself)
+    tokens: int | None = None  # our tokens it cost its client (None: no client login made it)
 
 
 def _summary(job: Job) -> JobSummary:
@@ -182,6 +192,7 @@ def _summary(job: Job) -> JobSummary:
         cost_usd=job.cost_usd,
         uncosted_calls=job.uncosted_calls,
         cost_partial=job.cost_partial,
+        client=job.client,
     )
 
 
@@ -210,6 +221,14 @@ button{width:100%;margin-top:22px;padding:11px;border:0;border-radius:8px;backgr
 <script>var n=document.getElementById("next");if(location.hash&&n.value.indexOf("#")<0)n.value+=location.hash;</script>
 </body></html>"""
 
+
+# What the partner login is not shown of the clients' jobs (its History tab, 2026-11-24; the owner: "without the real
+# api cost, prompt and 'api call' expander"): the API costs and call counts, and every prompt.
+PARTNER_HIDDEN: dict = {
+    **dict.fromkeys(("prompt", "brief_prompt", "cost_usd", "uncosted_calls", "cost_partial", "api_calls",
+                     "calls_in_flight"), True),
+    "variants": {"__all__": {"prompt", "cost_usd", "uncosted_calls", "api_calls"}},
+}
 
 # What the demo login is not shown of its own jobs: costs, models, prompts and the reference check's details.
 DEMO_HIDDEN: dict = {
@@ -411,6 +430,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             customers.folder_of(settings.output_dir), taken_slugs=tuple(clients),
             reserved_usernames=(*reserved, *(b.login.username for b in clients.values() if b.login is not None))))
         index_page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        for slug, edit in customers.read_edits(customers.folder_of(settings.output_dir)).items():
+            if slug in clients:  # a name, phone or password changed on a dashboard since the client was made
+                try:
+                    clients[slug] = customers.apply_edit(clients[slug], edit)
+                except customers.CustomerError as exc:
+                    log.error("the changes kept for the client %s are left out: %s", slug, exc)
         for slug, brand in list(clients.items()):  # a page that can't be branded is left out now, not served as 500
             try:
                 brand_page(index_page, brand)
@@ -699,18 +724,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "waiting": pays.waiting(), "buying": pays.enabled and book.enabled,
                 "welcome": settings.welcome_tokens if book.enabled else 0}  # what a customer made here starts with
 
-    def entry_point(slug: str, request: Request) -> dict | None:
-        """A client's way in, for the dashboards: its page, phone and login name, and for the head admin its
-        password too (the head admin's own list of every login; the partner sees a password only when it makes the
-        customer). None for a client without a page now."""
+    def entry_point(slug: str) -> dict | None:
+        """A client's way in, for the two dashboards (the head admin and the partner; the owner, 2026-11-24: "for
+        partner dashboard, he should also see the password and edit"): its page, phone, login name and password.
+        None for a client without a page now."""
         brand = clients.get(slug)
         if brand is None:
             return None
-        out = {"path": brand.path, "phone": brand.phone, "username": brand.login.username if brand.login else None,
-               "made_at": brand.made_at, "made_by": brand.made_by}
-        if brand.login is not None and not is_limited(request):
-            out["password"] = brand.login.password
-        return out
+        return {"path": brand.path, "phone": brand.phone, "username": brand.login.username if brand.login else None,
+                "password": brand.login.password if brand.login else None,
+                "made_at": brand.made_at, "made_by": brand.made_by}
 
     def pay_view(pay: dict) -> dict:
         """A payment request for the two dashboards, with the number it was paid from in full for both (the owner,
@@ -852,7 +875,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({
             "enabled": book.enabled, **board_flags(request), "days": days,
             "prices": book.prices.as_dict() if book.enabled else None,
-            "entry": entry_point(slug, request),  # its page, phone and login
+            "entry": entry_point(slug),  # its page, phone and login
             "payments": [pay_view(pay) for pay in pays.of_client(slug)],  # its bKash payments, all time
             "client": {"slug": slug, "name": names[slug], "has_page": slug in clients, "balance": book.balance(slug),
                        "available": book.available(slug),  # less what running jobs hold: the most a take-back can take
@@ -950,6 +973,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        "username": brand.login.username, "password": brand.login.password},
             "tokens": tokens, "balance": book.balance(slug) if book.enabled else 0,
         }, status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/clients/{slug}")
+    async def customer_edit(request: Request, slug: str, body: CustomerEdit) -> JSONResponse:
+        """Change a client's name, phone or password (head admin and partner; any client with a page, also one
+        written by hand). Only what is sent is changed. A new password signs the client out everywhere: it signs in
+        again with the new one. Kept in the server's own data (app/customers.py), so a deploy never undoes it."""
+        studio_or_partner(request)
+        by = who(request)
+        async with customer_lock:
+            brand = clients.get(slug)
+            if brand is None:
+                raise HTTPException(404, "No such client.")
+            try:
+                changes: dict = {}
+                if body.name is not None and customers.clean_name(body.name) != brand.name:
+                    changes["name"] = customers.clean_name(body.name)
+                if body.phone is not None and body.phone.strip() != brand.phone:
+                    phone = customers.clean_phone(body.phone) if body.phone.strip() else ""
+                    if phone != brand.phone:  # the same number typed with other spacing is no change
+                        changes["phone"] = phone
+                if body.password is not None and (brand.login is None or body.password != brand.login.password):
+                    changes["password"] = customers.clean_password(body.password)
+                changed = customers.apply_edit(brand, changes)
+            except customers.CustomerError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if changes:
+                page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+                at = utcnow_iso()
+                try:
+                    brand_page(page, changed)
+                    await asyncio.to_thread(customers.save_edit, customers.folder_of(settings.output_dir), slug, changes, by, at)
+                except Exception as exc:  # the file couldn't be written, or the page couldn't be made with the change
+                    log.exception("customers: the change to %s could not be kept", slug)
+                    raise HTTPException(500, "The change could not be kept. Nothing was changed; please try again.") from exc
+                clients[slug] = changed
+                if changed.login is not None:
+                    logins[slug] = changed.login
+                log.info("customers: %s changed %s of /client_%s", by, ", ".join(changes), slug)
+                sheet.enqueue(sheets.customer_row(changed, by, changed=tuple(changes), at=at))
+        return JSONResponse({"entry": entry_point(slug), "name": clients[slug].name, "changed": sorted(changes)},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/tokens/mine")
     async def my_tokens(request: Request, client: str = "") -> dict:
@@ -1322,23 +1386,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def add_job_routes(api: str, files: str, mgr: JobManager, job_store: JobStore) -> None:
         """History endpoints: the jobs and their files."""
 
+        def job_tokens(job: Job, names: dict[str, str] | None = None) -> dict:
+            """What a job cost its client in our tokens, for History (2026-11-24): the total and each charged image;
+            None for a job no client login made (it costs no tokens)."""
+            if not job.client:
+                return {"tokens": None, "token_items": [], "client_name": None}
+            charges = book.job_charges(job.id)
+            return {"tokens": sum(-e["tokens"] for e in charges),
+                    "token_items": [{"variant": e.get("variant"), "item": e.get("item"), "tokens": -e["tokens"]} for e in charges],
+                    "client_name": (names or client_names()).get(job.client, job.client)}
+
         @app.get(api, response_model=list[JobSummary])
         async def list_jobs(
+            request: Request,
             limit: int = Query(60, ge=1, le=500),
             kind: JobKind | None = None,
             session_id: str | None = None,
+            clients: bool = False,
+            client: str = Query("", max_length=32),
         ) -> list[JobSummary]:
-            return [_summary(j) for j in mgr.list(limit=limit, kind=kind, session_id=session_id)]
+            """History's cards, newest first. The head admin gets every job (`clients`: only those made with a client
+            login, as the Partner dashboard lists them); a client login only the jobs it made, and the partner only
+            the jobs made with a client login, both without costs (the client also without the model); the demo login
+            none. Each job made with a client login says the tokens it cost."""
+            own = client_login(request)
+            if is_demo(request):
+                raise limited_refusal(request)
+            # `client`: one client's jobs (the head admin on that client's page); a client login always gets its own
+            match = ((lambda j: j.client == own) if own else (lambda j: j.client == client) if client
+                     else (lambda j: j.client is not None) if is_partner(request) or clients else None)
+            names = client_names()
+            out = []
+            for job in mgr.list(limit=limit, kind=kind, session_id=session_id, match=match):
+                extra = job_tokens(job, names)
+                update = {"tokens": extra["tokens"], "client_name": extra["client_name"]}
+                if is_limited(request):
+                    update.update(cost_usd=None, uncosted_calls=0, cost_partial=False)
+                if own:  # the client itself: no model names either, as on the rest of its page
+                    update.update(provider=None, model=None, client_name=None)
+                out.append(_summary(job).model_copy(update=update))
+            return out
 
-        @app.get(api + "/{job_id}", response_model=Job)
-        async def get_job(request: Request, job_id: str) -> Job | JSONResponse:
+        @app.get(api + "/{job_id}")
+        async def get_job(request: Request, job_id: str) -> JSONResponse:
             login_scope(request, job_id)
             job = mgr.get(job_id) if is_valid_job_id(job_id) else None
             if job is None:
                 raise HTTPException(404, "Job not found.")
-            if is_limited(request):  # the demo page and the client pages: no costs, models or prompts
-                return JSONResponse(job.model_dump(mode="json", exclude=DEMO_HIDDEN), headers={"Cache-Control": "no-store"})
-            return job
+            # the demo page and the client pages: no costs, models or prompts; the partner: no costs or prompts
+            hidden = PARTNER_HIDDEN if is_partner(request) else DEMO_HIDDEN if is_limited(request) else None
+            return JSONResponse({**job.model_dump(mode="json", exclude=hidden), **job_tokens(job)},
+                                headers={"Cache-Control": "no-store"} if hidden else None)
 
         @app.delete(api + "/{job_id}", status_code=204)
         async def delete_job(job_id: str) -> Response:
@@ -1450,9 +1548,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         @app.get(files + "/{job_id}/{filename}")
         async def get_file(request: Request, job_id: str, filename: str, download: bool = False) -> FileResponse:
-            login_scope(request, job_id)
-            if is_partner(request) and not filename.endswith("_preview.webp"):  # the client dashboard's thumbnails
-                raise HTTPException(404, "File not found.")
+            login_scope(request, job_id)  # the partner: the files of jobs made with a client login (its History tab)
             path = job_store.file_path(job_id, filename)
             # a panel's print PNG is made on demand; so is an export the clean-up deleted after a page had listed it
             if path is None and (await mgr.ensure_print_png(job_id, filename)

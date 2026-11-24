@@ -181,10 +181,24 @@ async function boot() {
       renderHeaderActions(config, CLIENT ? [purseChip({ href: '#tokens' })] : []);
       const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: KEY, client: CLIENT });
       const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: KEY, client: CLIENT });
-      // a client page also has its "Customer dashboard" (customerboard.js); no History tab anywhere here
+      // a client page also has its own History (history.js, the jobs that client made; since 2026-11-24) and its
+      // "Customer dashboard" (customerboard.js); /customerep and /experiment have neither
       const board = CLIENT ? initCustomerBoard(document.getElementById('panel-tokens'), { client: CLIENT }) : null;
-      const tabs = board
-        ? initTabs((name) => (name === 'tokens' ? board.activate() : board.deactivate()), ['recreate', 'design', 'tokens'])
+      let tabs = null;
+      const historyTab = CLIENT ? initHistory(document.getElementById('panel-history'), {
+        scope: 'customer',
+        client: CLIENT,
+        onContinue: (job) => {
+          tabs.select('design', false);
+          design.continueFrom(job);
+        },
+      }) : null;
+      tabs = board
+        ? initTabs((name) => {
+          if (name === 'tokens') board.activate();
+          else board.deactivate();
+          if (name === 'history') historyTab.activate();
+        }, ['recreate', 'design', 'history', 'tokens'])
         : initTabs(() => {}, ['recreate', 'design']);
       wireGlobalInput(tabs, recreate, design);
       bootEl.remove();

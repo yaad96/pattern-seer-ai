@@ -280,6 +280,12 @@ export const api = {
     return request('POST', '/api/clients', { form });
   },
 
+  /** POST /api/clients/{slug} {name?, phone?, password?} -> {entry, name, changed}: change a client's name, phone or
+   * password (head admin and partner); only what is sent is changed. */
+  customerEdit(slug, changes) {
+    return request('POST', `/api/clients/${seg(slug)}`, { json: changes });
+  },
+
   /** GET /api/admin/sheet-script -> {script, version}: the Apps Script for the Google Sheet, with this machine's
    * secret in it (the head admin; the Supreme dashboard's Settings copies it for pasting into the sheet). */
   sheetScript() {
@@ -303,11 +309,13 @@ export const api = {
   },
 
   /** GET /api/jobs -> JobSummary[] (newest first). */
-  listJobs({ limit, kind, sessionId } = {}) {
+  listJobs({ limit, kind, sessionId, clients, client } = {}) {
     const q = new URLSearchParams();
     if (limit) q.set('limit', String(limit));
     if (kind) q.set('kind', kind);
     if (sessionId) q.set('session_id', sessionId);
+    if (clients) q.set('clients', '1'); // only the jobs made with a client login (the Partner dashboard's History)
+    if (client) q.set('client', client); // only that client's (a client page's History)
     const qs = q.toString();
     return request('GET', `${JOBS_API}${qs ? `?${qs}` : ''}`);
   },

@@ -153,8 +153,9 @@ DEMO_ROUTES = (("GET", re.compile(r"/customerep/?")), *PAGE_ROUTES)
 
 
 def client_routes(slug: str) -> tuple:
-    """What a client login may reach: its own page /client_<slug> and what it calls; no other page of the app."""
-    return (("GET", re.compile(rf"/client_{re.escape(slug)}/?")), *PAGE_ROUTES)
+    """What a client login may reach: its own page /client_<slug> and what it calls; no other page of the app. Since
+    2026-11-24 also the list of its own jobs, for its page's History tab (the route gives it no one else's)."""
+    return (("GET", re.compile(rf"/client_{re.escape(slug)}/?")), ("GET", re.compile(r"/api/jobs")), *PAGE_ROUTES)
 
 
 def _allows(routes: tuple, method: str, path: str) -> bool:
@@ -181,6 +182,16 @@ PARTNER_ROUTES = (
     ("GET", re.compile(r"/api/pay/requests")),
     ("POST", re.compile(r"/api/pay/requests/[a-z0-9]+/(approve|reject)")),
     ("POST", re.compile(r"/api/clients(/preview)?")),  # the Customer EntryPoint Builder (app/customers.py)
+    ("POST", re.compile(r"/api/clients/[a-z0-9]+")),  # … and a client's name, phone and password changed afterwards
+    # its History tab (2026-11-24): the clients' jobs with their files, downloads and exports; the routes keep it to
+    # jobs made with a client login and send it no API cost, prompt or call log. No deleting, no generating again.
+    ("GET", re.compile(r"/api/config")),
+    ("GET", re.compile(r"/api/jobs")),
+    ("GET", re.compile(r"/api/jobs/[^/]+")),
+    ("POST", re.compile(r"/api/jobs/[^/]+/variants/\d+/vectorize")),
+    ("GET", re.compile(r"/api/jobs/[^/]+/panels-(eps|png)\.zip")),
+    ("POST", re.compile(r"/api/jobs/[^/]+/downloads")),
+    ("GET", re.compile(r"/api/jobs/[^/]+/downloads")),
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
 

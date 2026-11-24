@@ -128,6 +128,9 @@ const BN = new Map(Object.entries({
   'No tokens added yet.': 'এখনো কোনো টোকেন যোগ হয়নি।',
   'Balance after': 'এরপর বাকি',
   'Correction': 'সংশোধন',
+  // History's tokens per job (history.js, 2026-11-24)
+  'No tokens were taken for this job.': 'এই কাজে কোনো টোকেন কাটা হয়নি।',
+  'The tokens are taken when the job ends, for each image that comes out.': 'কাজ শেষ হলে, যে ছবিগুলো তৈরি হয় সেগুলোর জন্য টোকেন কাটা হয়।',
   // "Buy tokens" with bKash, checked by hand (customerboard.js, app/payments.py; 2026-11-24). The note under the
   // form is the owner's own sentence; the other texts follow its words (ভেরিফাই, অ্যাড) and the approved drawing.
   'Package': 'প্যাকেজ',

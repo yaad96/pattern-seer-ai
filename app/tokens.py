@@ -121,6 +121,7 @@ class TokenBook:
         this one was made may have written to the ledger since (2026-11-23 review CHAOS-1). Holds stay."""
         self._balance: dict[str, int] = defaultdict(int)
         self._charged: set[tuple[str, int]] = set()
+        self._by_job: dict[str, list[dict]] = defaultdict(list)  # a job id -> its charges (History's tokens per job)
         self._requests: dict[str, dict] = {}  # a top-up's request id -> its ledger line (the same form sent again)
         self._entries = self._read()
         for entry in self._entries:
@@ -139,6 +140,10 @@ class TokenBook:
     def clients(self) -> list[str]:
         """Every client with ledger history."""
         return list(self._balance)
+
+    def job_charges(self, job_id: str) -> list[dict]:
+        """The charges a job's images made to its client's purse, oldest first ([] for a job that cost no tokens)."""
+        return list(self._by_job.get(job_id, ()))
 
     def _read(self) -> list[dict]:
         try:  # a byte cut mid-character (a crash) spoils only its own line, never the file
@@ -162,6 +167,7 @@ class TokenBook:
         self._balance[entry["client"]] += entry["tokens"]
         if entry.get("type") == "charge":
             self._charged.add((entry.get("job_id"), entry.get("variant")))
+            self._by_job[entry.get("job_id")].append(entry)
         if isinstance(entry.get("request_id"), str):
             self._requests[entry["request_id"]] = entry
 

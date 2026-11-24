@@ -1,13 +1,23 @@
 /**
  * History tab: recent jobs as cards (kind filter, refresh, load more) and a detail drawer with
  * results, downloads, EPS export, the AI reference check, prompts, brief, "Continue in chat" and Delete.
+ * Three views of the same thing (2026-11-24; the owner: "for the customer, a similar History tab ... the exact copy
+ * of the studio user's history, only filtered for that customer", "same for partner ... without the real api cost,
+ * prompt and api call expander", "for all the history, add the tokens consumed per job"):
+ *   studio    the head admin's, on the main page: every job, with everything
+ *   customer  a client page's own: the jobs that client made; like the rest of its page it shows no model, cost,
+ *             prompt or API call; no Delete (the server sends it none of that and lists only its own jobs)
+ *   partner   the Partner dashboard's: the jobs made with a client login, with their files and exports; no real API
+ *             cost, no prompts, no API-calls list; no Delete, no generating again, no "Continue in chat"
+ * Every view says what a job cost its client in our tokens.
  */
 import { api, fileUrl, getConfig } from './api.js';
-import { h, icon, uid, clear, replace, fmtDateTime, fmtRelative } from './dom.js';
+import { h, icon, uid, clear, replace, fmtDateTime, fmtInt, fmtRelative } from './dom.js';
 import { createProgress, isActive, statusBadge, watchJob } from './jobs.js';
 import { createCallLog } from './calls.js';
-import { bulletList, cardCost, createResults, dotSeparated, jobCostText, modelLabel, renderBrief, specList } from './results.js';
+import { bulletList, cardCost, createResults, customerError, customerWarnings, dotSeparated, jobCostText, modelLabel, renderBrief, specList } from './results.js';
 import { promptBlock } from './settings.js';
+import { part } from './tokenviews.js';
 import { callout, closeDialog, confirmDialog, loadingRow, openLightbox, segmented, setBusy, showDialog, toast } from './ui.js';
 
 const PAGE = 60;
@@ -106,13 +116,17 @@ function optionValue(key, value) {
   return String(value);
 }
 
-function optionRows(options) {
+// A client's own History leaves out the settings its page never shows it: the model and the output settings.
+const CLIENT_HIDDEN_OPTIONS = new Set(['provider', 'model', 'resolution', 'aspect_ratio', 'print_long_edge', 'seed',
+  'use_brief_writer', 'brief_writer', 'reference_check']);
+
+function optionRows(options, forClient) {
   const panels = options && options.mode === 'panels';
   // back only means something for panels; panels have a fixed print size and fixed ratios, so their Print size and
   // Aspect ratio values are unused. Variants is hidden in the forms (always 1 since 2026-11-03), so it isn't listed.
   const panelOnly = (key) => ['back', 'back_crop', 'panels', 'sleeve_crop', 'reference_check'].includes(key);
   const unusedInPanels = (key) => key === 'print_long_edge' || key === 'aspect_ratio';
-  const shown = Object.keys(options || {}).filter((key) => key !== 'variants'
+  const shown = Object.keys(options || {}).filter((key) => key !== 'variants' && !(forClient && CLIENT_HIDDEN_OPTIONS.has(key))
     && (panelOnly(key) ? panels : !(panels && unusedInPanels(key))));
   return shown.map((key) => {
     const label = OPTION_LABELS[key] || key.replace(/_/g, ' ');
@@ -120,8 +134,11 @@ function optionRows(options) {
   });
 }
 
-export function initHistory(root, { onContinue, onDeleted }) {
+export function initHistory(root, { onContinue, onDeleted, scope = 'studio', client = '' } = {}) {
   const state = { kind: '', limit: PAGE, items: [], loaded: false, seq: 0 };
+  const studio = scope === 'studio';
+  const forClient = scope === 'customer';
+  const tokensText = (n) => (typeof n === 'number' ? `${fmtInt(n)} tokens` : '');
 
   const filter = segmented({
     legend: 'Show',
@@ -154,7 +171,9 @@ export function initHistory(root, { onContinue, onDeleted }) {
     setBusy(refreshBtn, true, 'Refreshing…');
     if (!state.loaded) replace(grid, loadingRow('Loading history…'));
     try {
-      const items = await api.listJobs({ limit: state.limit, kind: state.kind || undefined });
+      // the Partner dashboard lists the clients' jobs, whoever looks at it (the head admin opens it too)
+      // and a client page lists that client's (the head admin opens a client's page too)
+      const items = await api.listJobs({ limit: state.limit, kind: state.kind || undefined, clients: scope === 'partner', client });
       if (mine !== state.seq) return;
       state.items = items;
       state.loaded = true;
@@ -170,8 +189,9 @@ export function initHistory(root, { onContinue, onDeleted }) {
 
   function card(s) {
     const title = s.kind === 'design' ? (s.message || 'Design') : 'Recreate from image';
-    const meta = [modelLabel(s.provider, s.model), `${s.succeeded}/${s.variants} variant${s.variants === 1 ? '' : 's'}`];
-    meta.push(...cardCost(s));
+    const meta = [forClient ? '' : modelLabel(s.provider, s.model), `${s.succeeded}/${s.variants} variant${s.variants === 1 ? '' : 's'}`];
+    if (studio) meta.push(...cardCost(s)); // the real API cost: the head admin's alone
+    meta.push(tokensText(s.tokens)); // what it cost its client in our tokens (nothing for a job no client made)
     return h('button', { type: 'button', class: 'job-card', dataset: { jobId: s.id }, onClick: () => openJob(s.id) },
       h('span', { class: 'job-card-media' },
         s.preview
@@ -183,6 +203,7 @@ export function initHistory(root, { onContinue, onDeleted }) {
           h('span', { class: 'badge badge-accent' }, KIND_LABEL[s.kind] || s.kind),
           h('span', { title: fmtDateTime(s.created_at) }, fmtRelative(s.created_at))),
         h('span', { class: 'job-card-title' }, title),
+        s.client_name && !forClient ? h('span', { class: 'job-card-client', 'data-no-translate': '' }, s.client_name) : null,
         h('span', { class: 'job-card-meta' }, dotSeparated(meta.filter(Boolean)))));
   }
 
@@ -195,7 +216,8 @@ export function initHistory(root, { onContinue, onDeleted }) {
         h('p', { class: 'empty-title' }, 'Nothing here yet'),
         h('p', { class: 'empty-text' }, state.kind
           ? `No ${KIND_LABEL[state.kind].toLowerCase()} jobs yet.`
-          : 'Everything you make in Recreate and Design is listed here.')));
+          : scope === 'partner' ? 'Every job your clients make is listed here.'
+            : 'Everything you make in Recreate and Design is listed here.')));
       clear(more);
       return;
     }
@@ -245,7 +267,8 @@ export function initHistory(root, { onContinue, onDeleted }) {
       view.restartClock();
       if (dlg.isConnected) watch();
     };
-    const view = renderDrawer(job, { dlg, title, sub, body, onRetry });
+    // generating a failed image again costs an AI image: the head admin's and the client's own to do, not the partner's
+    const view = renderDrawer(job, { dlg, title, sub, body, onRetry: scope === 'partner' ? null : onRetry });
     if (isActive(job.status)) watch();
   }
 
@@ -256,11 +279,14 @@ export function initHistory(root, { onContinue, onDeleted }) {
     title.textContent = job.kind === 'design' ? truncate(job.message || 'Design', 90) : 'Recreate from image';
     const badge = h('span');
     const cost = h('span');
+    const tokens = h('span');
     replace(sub,
       h('span', { class: 'badge badge-accent' }, KIND_LABEL[job.kind] || job.kind),
       badge,
+      job.client_name && !forClient ? h('span', { class: 'badge', 'data-no-translate': '' }, job.client_name) : null,
       h('span', null, fmtDateTime(job.created_at)),
       cost,
+      tokens,
       h('span', { class: 'mono' }, job.id));
 
     const actions = h('div', { class: 'drawer-actions' });
@@ -272,8 +298,9 @@ export function initHistory(root, { onContinue, onDeleted }) {
       });
       actions.appendChild(continueBtn);
     }
-    const deleteBtn = h('button', { type: 'button', class: 'btn btn-danger' }, icon('trash'), 'Delete');
-    deleteBtn.addEventListener('click', async () => {
+    // deleting a job removes it for everyone, for good: the head admin's alone
+    const deleteBtn = studio ? h('button', { type: 'button', class: 'btn btn-danger' }, icon('trash'), 'Delete') : null;
+    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Delete this job?',
         message: 'Its images and EPS/SVG/PDF files are removed from the server. This cannot be undone.',
@@ -295,19 +322,34 @@ export function initHistory(root, { onContinue, onDeleted }) {
       render();
       if (onDeleted) onDeleted(job.id);
     });
-    actions.appendChild(deleteBtn);
+    if (deleteBtn) actions.appendChild(deleteBtn);
 
     const progressSlot = h('div');
     const textSlot = h('div', { class: 'result-stack' });
-    const results = createResults(job, { compare: job.kind === 'recreate', vectorsOpen: false, onRetry });
+    const results = createResults(job, { compare: job.kind === 'recreate', vectorsOpen: false, onRetry, customer: forClient, noCost: !studio });
+    const tokensSlot = h('div');
     const detailsSlot = h('div', { class: 'result-stack' });
-    const callLog = createCallLog(job);  // kept across re-renders, so it stays open while calls come in
-    replace(body, actions, progressSlot, textSlot, section('Variants', results.el), detailsSlot, callLog.el);
+    // every paid API call of the job: the head admin's alone (kept across re-renders, so it stays open while calls come in)
+    const callLog = studio ? createCallLog(job) : null;
+    replace(body, actions.childNodes.length ? actions : null, progressSlot, textSlot, section('Variants', results.el),
+      tokensSlot, detailsSlot, callLog ? callLog.el : null);
+
+    /** What the job cost its client in our tokens: each image that was charged, and the total. */
+    function tokenParts() {
+      if (typeof job.tokens !== 'number') return null; // no client login made it
+      const items = Array.isArray(job.token_items) ? job.token_items : [];
+      return section('Tokens used',
+        items.length ? h('div', { class: 'cb-parts' }, items.map((e) => part(e.item, e.tokens, false)),
+          h('span', { class: 'cb-part' }, h('span', null, 'In all'), ' ', h('strong', null, fmtInt(job.tokens))))
+          : h('p', { class: 'hint' }, isActive(job.status) ? 'The tokens are taken when the job ends, for each image that comes out.'
+            : 'No tokens were taken for this job.'));
+    }
 
     function textParts() {
       const parts = [];
-      if (job.status === 'failed' && job.error) parts.push(callout('error', job.error));
-      for (const w of job.warnings || []) parts.push(callout('warning', w));
+      // a client reads the plain words its page uses everywhere; the others the messages as they are
+      if (job.status === 'failed' && job.error) parts.push(callout('error', forClient ? customerError(job.error) : job.error));
+      for (const w of (forClient ? customerWarnings(job.warnings) : job.warnings || [])) parts.push(callout('warning', w));
       const o = job.options || {};
       const panelJob = job.kind === 'recreate' && o.mode === 'panels';
       // the first chosen panel (the server stores them in front, back, sleeve order); jobs before 2026-11-04 had
@@ -334,21 +376,22 @@ export function initHistory(root, { onContinue, onDeleted }) {
         if (job.reply) parts.push(section('Designer reply', h('p', null, job.reply)));
         if (job.changes && job.changes.length) parts.push(section('What changed', bulletList(job.changes)));
         if (job.suggestions && job.suggestions.length) parts.push(section('Suggestions', bulletList(job.suggestions)));
-        if (job.brief) parts.push(renderBrief(job.brief, job.brief_writer));
+        if (job.brief) parts.push(renderBrief(job.brief, forClient ? null : job.brief_writer));
       } else if (inputs.length) {
         parts.push(section('Reference image', h('div', { class: 'thumbs' }, inputs)));
       }
-      if (job.reference_analysis && typeof job.reference_analysis === 'object') parts.push(referenceCheck(job.reference_analysis));
+      if (!forClient && job.reference_analysis && typeof job.reference_analysis === 'object') parts.push(referenceCheck(job.reference_analysis));
       return parts;
     }
 
     function detailParts() {
-      const parts = [section('Settings', specList([
+      const parts = [section('Settings', specList((forClient ? [] : [
         ['Model', modelLabel(job.provider, job.model)],
         ['Aspect ratio', job.aspect_ratio],
         ['Resolution', job.resolution],
         ['AI designer', job.brief_writer],
-      ].concat(optionRows(job.options))))];
+      ]).concat(optionRows(job.options, forClient))))];
+      if (!studio) return parts; // the prompts sent to the AI: the head admin's alone
       if (job.prompt) {
         parts.push(h('details', { class: 'vector-export' },
           h('summary', null, icon('eye'), 'Image prompt sent', icon('chevron', 'chev')),
@@ -379,18 +422,23 @@ export function initHistory(root, { onContinue, onDeleted }) {
         progress.el.remove();
         progress = null;
       }
-      cost.textContent = jobCostText(job);
+      cost.textContent = studio ? jobCostText(job) : '';
+      tokens.textContent = tokensText(job.tokens);
       const nextSig = [job.status, job.error || '', (job.warnings || []).length, job.reply || '',
-        job.brief ? 1 : 0, job.prompt ? 1 : 0, job.brief_prompt ? 1 : 0, job.reference_analysis ? 1 : 0].join('|');
+        job.brief ? 1 : 0, job.prompt ? 1 : 0, job.brief_prompt ? 1 : 0, job.reference_analysis ? 1 : 0,
+        job.tokens, (job.token_items || []).length].join('|');
       if (nextSig !== sig) {
         sig = nextSig;
         replace(textSlot, textParts());
+        replace(tokensSlot, tokenParts());
         replace(detailsSlot, detailParts());
       }
       results.update(job);
-      callLog.update(job);
-      deleteBtn.disabled = isActive(job.status);
-      deleteBtn.title = deleteBtn.disabled ? 'A running job cannot be deleted.' : '';
+      if (callLog) callLog.update(job);
+      if (deleteBtn) {
+        deleteBtn.disabled = isActive(job.status);
+        deleteBtn.title = deleteBtn.disabled ? 'A running job cannot be deleted.' : '';
+      }
     }
 
     update(job, {});

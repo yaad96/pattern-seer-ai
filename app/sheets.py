@@ -189,14 +189,17 @@ def topup_row(entry: dict, customer: str = "", *, event: str | None = None) -> d
     }
 
 
-def customer_row(brand, by: str) -> dict:
+def customer_row(brand, by: str, *, changed: tuple[str, ...] | None = None, at: str | None = None) -> dict:
     """A customer made with the dashboards' builder (app/customers.py): who made it, its link, login name and phone.
-    Never its password."""
-    at_utc, at_bd = _times(brand.made_at)
+    `changed`: instead, a customer edited on a dashboard, with what was changed ("name", "phone", "password").
+    Never the password itself."""
+    at_utc, at_bd = _times(at or brand.made_at)
     return {
-        "Event": "Customer added", "Time (UTC)": at_utc, "Time (Bangladesh)": at_bd, "Login": WHO.get(by, by),
-        "Customer": brand.name, "Client ID": brand.slug, "Customer phone": brand.phone,
-        "Top-up note": f"Entry point {brand.path}, username {brand.login.username if brand.login else ''}",
+        "Event": "Customer added" if changed is None else "Customer edited", "Time (UTC)": at_utc,
+        "Time (Bangladesh)": at_bd, "Login": WHO.get(by, by), "Customer": brand.name, "Client ID": brand.slug,
+        "Customer phone": brand.phone,
+        "Top-up note": (f"Entry point {brand.path}, username {brand.login.username if brand.login else ''}"
+                        if changed is None else f"Changed: {', '.join(changed)}"),
         "Added by": WHO.get(by, by),
     }
 
