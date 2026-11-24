@@ -9,7 +9,9 @@ Signing in from a client page happens on a sign-in page in the client's colours 
 
 Everything about a client lives in the git-ignored folder client_assets/ (the logos and clients.json, with the
 login; its README.md gives the format), so this public code holds no client material. The folder is read once at
-start-up: restart the app after changing it."""
+start-up: restart the app after changing it. Since 2026-11-24 a client can also be made on the dashboards (the
+Customer EntryPoint Builder, app/customers.py): those live in <output_dir>/clients/ in the same format, and work
+at once."""
 
 from __future__ import annotations
 
@@ -169,6 +171,9 @@ class ClientBrand:
     light: tuple[tuple[str, str], ...]  # colour tokens (theme())
     dark: tuple[tuple[str, str], ...]
     login: ClientLogin | None = None  # the page's own login; without one only the studio login can open the page
+    phone: str = ""  # a number to reach the client on (the dashboards show it in full)
+    made_at: str = ""  # when and by whom ("studio" / "partner") it was made with the builder; "" for one written by hand
+    made_by: str = ""
 
     @property
     def path(self) -> str:
@@ -214,7 +219,17 @@ def _text(value: object, what: str, limit: int) -> str:
     return value.strip()
 
 
-def _client(folder: Path, entry: object) -> ClientBrand:
+def _note(entry: dict, key: str, limit: int) -> str:
+    """An optional short text of an entry (the phone, who made it and when): "" when absent."""
+    value = entry.get(key, "")
+    if not isinstance(value, str) or len(value) > limit:
+        raise ClientError(f"{key}: a text of at most {limit} characters")
+    return value.strip()
+
+
+def read_client(folder: Path, entry: object) -> ClientBrand:
+    """One clients.json entry, with its logo files from `folder`, as the page's brand; a ClientError says what is
+    wrong with it."""
     if not isinstance(entry, dict):
         raise ClientError("each client is an object")
     slug = entry.get("slug")
@@ -251,14 +266,16 @@ def _client(folder: Path, entry: object) -> ClientBrand:
         slug=slug, name=name, logo=logo, logo_size=logo_size, mark=mark, mark_size=mark_size,
         mark_alt=str(entry.get("mark_alt") or "").strip()[:TEXT_LIMIT], icon=icon, wordmark=tuple(parts),
         light=tuple(light.items()), dark=tuple(dark.items()), login=login,
+        phone=_note(entry, "phone", 30), made_at=_note(entry, "made_at", 40), made_by=_note(entry, "made_by", 40),
     )
 
 
-def load_clients(folder: Path, reserved_usernames: tuple[str, ...] = ()) -> dict[str, ClientBrand]:
+def load_clients(folder: Path, reserved_usernames: tuple[str, ...] = (),
+                 taken_slugs: tuple[str, ...] = ()) -> dict[str, ClientBrand]:
     """The client pages configured in `folder`/clients.json, by slug. A missing folder or file means none; a client
     with a mistake is left out and the mistake logged, so the app always starts. A client login whose username is
     one of `reserved_usernames` (the studio's and the demo's) or another client's is turned off, also logged: one
-    username must mean one login."""
+    username must mean one login. A slug in `taken_slugs` (the pages another folder already gave) is left out."""
     config = folder / CONFIG
     try:
         if not config.is_file():
@@ -273,14 +290,14 @@ def load_clients(folder: Path, reserved_usernames: tuple[str, ...] = ()) -> dict
     taken = {name.casefold() for name in reserved_usernames if name}
     for number, entry in enumerate(entries, 1):
         try:
-            brand = _client(folder, entry)
+            brand = read_client(folder, entry)
         except ClientError as exc:
             log.error("client %d in %s is left out: %s", number, config, exc)
             continue
         except Exception:  # anything unforeseen leaves this client out, not the app down
             log.exception("client %d in %s is left out", number, config)
             continue
-        if brand.slug in clients:
+        if brand.slug in clients or brand.slug in taken_slugs:
             log.error("client %d in %s is left out: the slug %r is used twice", number, config, brand.slug)
             continue
         if brand.login is not None:

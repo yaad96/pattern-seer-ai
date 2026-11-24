@@ -3,19 +3,21 @@
  * (/partner-dashboard: the head admin and the partner login) and the Supreme dashboard (/supreme-dashboard: the head
  * admin only), which has the same four tabs plus its own (supremeboard.js).
  *   To do     bKash payments waiting to be checked (approve / reject), adding tokens by hand, clients running low
- *   Clients   each client's purse, and a client's own page (#client=<slug>): its jobs, payments and tokens added
+ *   Clients   each client's purse, and a client's own page (#client=<slug>): its jobs, payments and tokens added;
+ *             and "Add a customer", the Customer EntryPoint Builder (app/customers.py): a new client page from a form
  *   Payments  every bKash payment, and the tokens added or taken back by hand
  *   Jobs      every client's jobs, day by day, with the tokens each part cost
  * Our tokens and taka only: never the API costs (the Supreme dashboard adds those itself). Both logins check payments
- * and add tokens; only the head admin takes tokens back, and the partner sees a payment's sender number masked (the
- * server decides both). In English (the owner's choice, 2026-11-23: internal pages), without the Bangla layer.
+ * and add tokens; only the head admin takes tokens back (the server decides). Phone numbers are shown in full to
+ * both (the owner, 2026-11-24: "no concealing of any phone numbers in my app anywhere"). In English (the owner's
+ * choice, 2026-11-23: internal pages), without the Bangla layer.
  * Data: /api/tokens/clients, /api/tokens/clients/{slug}, /api/tokens/jobs, /api/tokens/topups, /api/pay/requests
  * (app/main.py, app/tokens.py, app/payments.py).
  */
 import { api, newRequestId } from './api.js';
 import { h, icon, replace, fmtDateTime, fmtInt, storage } from './dom.js';
 import { jobsTable, pricesParts } from './tokenviews.js';
-import { callout, confirmDialog, field, inputEl, loadingRow, segmented, setBusy, toast } from './ui.js';
+import { callout, closeDialog, confirmDialog, copyText, field, inputEl, loadingRow, modal, segmented, setBusy, toast } from './ui.js';
 
 const HASH_CLIENT = /^#client=([a-z0-9]{1,32})$/;
 const RANGES = [['0', 'All time'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']];
@@ -496,17 +498,19 @@ export function startBoard(options) {
         h('p', { class: 'empty-text' }, 'A client appears here once it has its own page.'));
     }
     if (!list.length) return h('p', { class: 'hint' }, 'No client matches the search.');
-    const heads = ['Client', 'Balance now', 'Used', 'Added', 'Taka received', 'Jobs',
+    const heads = ['Client', 'Phone', 'Balance now', 'Used', 'Added', 'Taka received', 'Jobs',
       ...(costs ? ['Real cost', 'Real cost per 100 tokens'] : []), 'Last job'];
+    const words = new Set(['Client', 'Phone', 'Last job']); // the other columns are numbers
     return h('table', { class: 'dash-table' },
-      h('thead', null, h('tr', null, heads.map((t, i) => h('th', {
-        class: [i && i < heads.length - 1 ? 'num' : null, t.startsWith('Real cost') ? 'only-you' : null],
+      h('thead', null, h('tr', null, heads.map((t) => h('th', {
+        class: [words.has(t) ? null : 'num', t.startsWith('Real cost') ? 'only-you' : null],
       }, t)))),
       h('tbody', null, list.map((c) => {
         const k = costs ? costs.get(c.slug) || { cost: 0, tokens: 0 } : null;
         return h('tr', null,
           h('td', null, h('a', { href: clientHash(c.slug) }, c.name),
             c.has_page ? null : [' ', h('span', { class: 'badge' }, 'No page now')]),
+          h('td', { class: 'nowrap' }, c.phone ? h('a', { href: `tel:${c.phone.replace(/[^0-9+]/g, '')}` }, c.phone) : '–'),
           h('td', { class: 'num' }, h('strong', null, plain(c.balance))),
           h('td', { class: 'num' }, fmtInt(c.used)),
           h('td', { class: 'num' }, signed(c.added)),
@@ -534,7 +538,8 @@ export function startBoard(options) {
           : tile('Real cost · only you', money(realCost), h('span', null, 'What OpenAI and Claude charged'), 'only-you')),
       card('Clients', [listBox, h('p', { class: 'hint' }, costs
         ? 'Press a client’s name for their own page. The real-cost columns exist only here, not on the Partner dashboard.'
-        : 'Press a client’s name for their own page: their jobs, payments and tokens.')]),
+        : 'Press a client’s name for their own page: their jobs, payments and tokens.')],
+      { actions: h('button', { type: 'button', class: 'btn btn-sm btn-primary', onClick: () => openBuilder() }, icon('plus'), 'Add a customer') }),
       pricesCard(overview.prices));
   }
 
@@ -562,6 +567,7 @@ export function startBoard(options) {
         tile('Taka received', taka(c.taka), h('span', null, periodText())),
         k ? tile('Real cost · only you', money(k.cost), h('span', null, k.tokens ? `${money((k.cost / k.tokens) * 100)} per 100 tokens` : periodText()), 'only-you')
           : tile('Jobs', fmtInt(made), h('span', null, periodText()))),
+      entryCard(detail.entry),
       card('Jobs', jobsBody, { note: periodText(), bodyClass: 'dash-scroll' }),
       card('bKash payments', detail.payments.length ? paysTable(detail.payments, { withClient: false })
         : h('p', { class: 'hint' }, 'This client has sent no bKash payment yet.'),
@@ -569,6 +575,188 @@ export function startBoard(options) {
       addCard(c),
       topupsCard(detail.topups),
       pricesCard(detail.prices));
+  }
+
+  /* ---------- a client's entry point, and the Customer EntryPoint Builder (app/customers.py) ---------- */
+  async function copy(text, what) {
+    const ok = await copyText(text);
+    toast(ok ? `${what} copied.` : 'Copy failed. Select the text and press Ctrl+C.', { kind: ok ? 'success' : 'error', timeout: ok ? 2000 : undefined });
+  }
+
+  const copyBtn = (text, what) => h('button', { type: 'button', class: 'btn btn-sm', onClick: () => copy(text, what) }, icon('copy'), 'Copy');
+  const codeRow = (label, text, what) => [h('dt', null, label), h('dd', { class: 'entry-value' }, h('code', { class: 'pay-code' }, text), copyBtn(text, what))];
+
+  /** How a client gets in: the link, the login, the phone number. The password is the head admin's to see here (the
+   * server sends it to no one else); the partner sees it when it makes the customer. */
+  function entryCard(entry) {
+    if (!entry) return null;
+    const link = `${window.location.origin}${entry.path}`;
+    return card('Entry point', h('dl', { class: 'spec-list entry-list' },
+      h('dt', null, 'Link'), h('dd', { class: 'entry-value' }, h('a', { href: entry.path, target: '_blank', rel: 'noopener' }, link), copyBtn(link, 'The link')),
+      entry.username ? codeRow('Username', entry.username, 'The username') : [h('dt', null, 'Login'), h('dd', null, 'No login of its own: only the head admin can open the page.')],
+      entry.password !== undefined ? codeRow('Password', entry.password, 'The password')
+        : entry.username ? [h('dt', null, 'Password'), h('dd', { class: 'muted' }, 'Shown when the customer was made. The head admin can see it on the Supreme dashboard.')] : null,
+      h('dt', null, 'Phone'), h('dd', null, entry.phone ? h('a', { href: `tel:${entry.phone.replace(/[^0-9+]/g, '')}` }, entry.phone) : '–'),
+      entry.made_at ? [h('dt', null, 'Made'), h('dd', null, `${fmtDateTime(entry.made_at)} by the ${who(entry.made_by).toLowerCase()}`)] : null),
+    { note: 'What the customer needs to get in.' });
+  }
+
+  /** "Add a customer": name, phone, the link's name (suggested, editable) and the logo; a preview with the colours
+   * picked from the logo; then the page, its login and the welcome tokens are made at once. */
+  function openBuilder() {
+    const origin = window.location.origin;
+    const welcome = overview.welcome || 0;
+    const nameIn = inputEl({ maxlength: '80', placeholder: 'e.g. Dhaka Tigers FC', autocomplete: 'off' });
+    const phoneIn = inputEl({ type: 'tel', maxlength: '24', placeholder: '01XXXXXXXXX', autocomplete: 'off' });
+    const slugIn = inputEl({ maxlength: '32', spellcheck: 'false', autocapitalize: 'none', autocomplete: 'off', class: 'input builder-slug' });
+    const fileIn = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', class: 'builder-file' });
+    const slugNote = h('p', { class: 'hint' }, 'Small letters and digits. It is suggested from the name; you can change it.');
+    const look = h('div', { class: 'builder-look' }, h('p', { class: 'hint' }, 'Choose the logo to see how the page will look.'));
+    const createBtn = h('button', { type: 'button', class: 'btn btn-primary' }, icon('plus'), 'Create the entry point');
+    const cancelBtn = h('button', { type: 'button', class: 'btn' }, 'Cancel');
+    const body = h('div', { class: 'builder' },
+      h('div', { class: 'field-grid' }, field('Customer name', nameIn), field('Phone number', phoneIn, 'To reach the customer. Shown in full on both dashboards.')),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Entry point link'),
+        h('div', { class: 'builder-link-row' }, h('span', { class: 'builder-origin' }, `${origin}/client_`), slugIn), slugNote),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Logo'), fileIn,
+        h('p', { class: 'hint' }, 'A PNG, JPEG or WebP picture, up to 5 MB. It is used as uploaded.')),
+      look,
+      welcome ? h('p', { class: 'hint' }, `The customer starts with ${fmtInt(welcome)} tokens.`) : null);
+    const dlg = modal({ title: 'Customer EntryPoint Builder', className: 'builder-dialog', body, footer: [cancelBtn, createBtn] });
+    let slugEdited = false;
+    let slugFree = false;
+    let colors = null; // the three colours: picked from the logo until one is changed here
+    let seq = 0;
+    let timer = 0;
+
+    function drawLook(res) {
+      const mock = (mode) => {
+        const el = h('div', { class: ['builder-mock', `is-${mode}`] },
+          h('div', { class: 'builder-band' }),
+          h('div', { class: 'builder-head' }, h('span', { class: 'builder-logo' }, h('img', { src: res.mark, alt: '' })),
+            h('span', { class: 'builder-name' }, nameIn.value.trim() || 'Customer name')),
+          h('div', { class: 'builder-body' }, h('span', { class: 'builder-step' }, '1'), h('span', { class: 'builder-text' }, 'A link'),
+            h('span', { class: 'builder-btn' }, 'Generate')),
+          h('span', { class: 'builder-tag' }, mode === 'light' ? 'Light' : 'Dark'));
+        for (const [key, value] of Object.entries({ ...res.light, ...(mode === 'dark' ? res.dark : {}) })) el.style.setProperty(key, value);
+        return el;
+      };
+      const pickers = [['primary', 'Main'], ['secondary', 'Second'], ['tertiary', 'Third']].map(([role, label]) => {
+        const input = h('input', { type: 'color', value: res.colors[role], 'aria-label': `${label} colour` });
+        input.addEventListener('change', () => {
+          colors = { ...res.colors, [role]: input.value };
+          ask(true);
+        });
+        return h('label', { class: 'builder-color' }, input, h('span', null, label));
+      });
+      replace(look,
+        h('div', { class: 'builder-mocks' }, mock('light'), mock('dark')),
+        h('div', { class: 'builder-colors' }, h('span', { class: 'field-label' }, 'Colours'), pickers,
+          h('span', { class: 'hint' }, colors ? 'Changed by you.' : 'Picked from the logo. Change one if it doesn’t look right.')),
+        h('div', { class: 'builder-signin' }, h('span', { class: 'hint' }, 'On the sign-in page:'), h('img', { src: res.logo, alt: '' })));
+    }
+
+    /** Ask the server: the suggested link name, whether the typed one is free, and (with the logo) how it looks. */
+    async function ask(withLogo) {
+      const mine = ++seq;
+      const form = new FormData();
+      form.append('name', nameIn.value);
+      form.append('slug', slugEdited ? slugIn.value : '');
+      const file = fileIn.files[0];
+      if (withLogo && file) {
+        form.append('logo', file, file.name);
+        if (colors) form.append('colors', JSON.stringify(colors));
+      }
+      try {
+        const res = await api.customerPreview(form);
+        if (mine !== seq || !dlg.isConnected) return;
+        if (!slugEdited) slugIn.value = nameIn.value.trim() ? res.suggested : '';
+        const slug = slugIn.value;
+        slugFree = Boolean(slug) && !(slugEdited && res.slug_problem);
+        slugNote.classList.toggle('is-bad', Boolean(slugEdited && res.slug_problem));
+        slugNote.textContent = slugEdited && res.slug_problem ? res.slug_problem
+          : slug ? `Free. The customer’s page will be ${origin}/client_${slug}` : 'Small letters and digits. It is suggested from the name; you can change it.';
+        if (res.logo) drawLook(res);
+      } catch (err) {
+        if (mine !== seq || !dlg.isConnected) return;
+        if (withLogo && file) replace(look, callout('error', err.message));
+        else toast(err.message, { kind: 'error' });
+      }
+    }
+
+    const soon = (withLogo) => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => ask(withLogo), 350);
+    };
+    nameIn.addEventListener('input', () => soon(false));
+    nameIn.addEventListener('change', () => { if (fileIn.files[0]) ask(true); }); // the name in the preview follows
+    slugIn.addEventListener('input', () => {
+      const cleaned = slugIn.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (cleaned !== slugIn.value) slugIn.value = cleaned;
+      slugEdited = Boolean(cleaned);
+      soon(false);
+    });
+    fileIn.addEventListener('change', () => {
+      colors = null;
+      if (fileIn.files[0]) {
+        replace(look, loadingRow('Preparing the preview…'));
+        ask(true);
+      }
+    });
+    cancelBtn.addEventListener('click', () => closeDialog(dlg));
+
+    function showResult(res) {
+      const c = res.client;
+      const link = `${origin}${c.path}`;
+      const message = [`${c.name}: আপনার জার্সি ডিজাইন পেজ রেডি।`, `লিংক: ${link}`, `ইউজারনেম: ${c.username}`, `পাসওয়ার্ড: ${c.password}`,
+        res.tokens ? `আপনার অ্যাকাউন্টে ${res.tokens} টোকেন অ্যাড করা হয়েছে।` : null].filter(Boolean).join('\n');
+      const area = h('textarea', { class: 'input builder-message', readonly: true, rows: '5', 'aria-label': 'A message for the customer' });
+      area.value = message;
+      const done = h('button', { type: 'button', class: 'btn btn-primary' }, 'Done');
+      done.addEventListener('click', () => closeDialog(dlg));
+      replace(dlg.querySelector('.modal-body'), h('div', { class: 'builder' },
+        h('p', { class: 'pay-clear' }, icon('check'), `${c.name}’s entry point is ready and works now.`),
+        h('dl', { class: 'spec-list entry-list' },
+          h('dt', null, 'Link'), h('dd', { class: 'entry-value' }, h('a', { href: c.path, target: '_blank', rel: 'noopener' }, link), copyBtn(link, 'The link')),
+          codeRow('Username', c.username, 'The username'), codeRow('Password', c.password, 'The password'),
+          h('dt', null, 'Phone'), h('dd', null, c.phone),
+          h('dt', null, 'Tokens'), h('dd', null, res.tokens ? `${fmtInt(res.tokens)} welcome tokens added` : 'None added (tokens are off, or the welcome tokens are set to 0)')),
+        callout(overview.can_take_back ? 'info' : 'warning', overview.can_take_back
+          ? 'You can see this login again on the customer’s page here, under Clients.'
+          : 'Copy the password now: after you close this, only the head admin can see it again.'),
+        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'A message to send the customer'), area,
+          h('div', null, h('button', { type: 'button', class: 'btn btn-sm', onClick: () => copy(message, 'The message') }, icon('copy'), 'Copy the message')))));
+      replace(dlg.querySelector('.modal-footer'), done);
+      done.focus();
+    }
+
+    createBtn.addEventListener('click', async () => {
+      const file = fileIn.files[0];
+      const problems = [[!nameIn.value.trim(), 'Enter the customer’s name.', nameIn], [!phoneIn.value.trim(), 'Enter the customer’s phone number.', phoneIn],
+        [!slugIn.value, 'Enter the link’s name.', slugIn], [!file, 'Choose the customer’s logo.', fileIn]];
+      const hit = problems.find(([bad]) => bad);
+      if (hit) {
+        toast(hit[1], { kind: 'warning' });
+        hit[2].focus();
+        return;
+      }
+      const form = new FormData();
+      form.append('name', nameIn.value);
+      form.append('phone', phoneIn.value);
+      form.append('slug', slugIn.value);
+      if (colors) form.append('colors', JSON.stringify(colors));
+      form.append('logo', file, file.name);
+      setBusy(createBtn, true, 'Creating…');
+      try {
+        const res = await api.customerCreate(form);
+        showResult(res);
+        load({ quiet: true });
+      } catch (err) {
+        toast(err.message, { kind: 'error' });
+        if (createBtn.isConnected) setBusy(createBtn, false);
+      }
+    });
+    nameIn.focus();
   }
 
   /** Tokens added to or taken from purses. `withClient`: a Client column (the Payments tab's list of every client). */

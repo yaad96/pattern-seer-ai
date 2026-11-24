@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +127,8 @@ class Settings(BaseSettings):
     # the client pages /client_<name> (app/clients.py): their logos and clients.json, git-ignored (client material);
     # also tokens.json, the token prices (app/tokens.py)
     client_assets_dir: Path = BASE_DIR / "client_assets"
+    # the tokens a customer made with the dashboards' builder starts with (app/customers.py); 0 = none
+    welcome_tokens: int = Field(100, ge=0, le=100000)
     # a login that opens only the client dashboard /client-dashboard (tokens per client, no costs); off when empty
     partner_username: str = "partner"
     partner_password: str = ""

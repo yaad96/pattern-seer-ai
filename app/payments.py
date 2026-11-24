@@ -69,13 +69,6 @@ def clean_trx(value: str) -> str:
     return trx if TRX_RE.fullmatch(trx) else ""
 
 
-def mask_number(number: str | None) -> str:
-    """'01712345678' -> '017XXXXXX78': enough to tell two senders apart, not the number itself (the partner's view)."""
-    if not number or len(number) < 6:
-        return ""
-    return f"{number[:3]}{'X' * (len(number) - 5)}{number[-2:]}"
-
-
 def reason_text(pay: dict) -> str:
     """Why a payment was rejected, in English: the standard reason, or what was written."""
     return REASON_TEXT.get(pay.get("reason") or "", pay.get("reason_text") or "")

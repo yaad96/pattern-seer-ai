@@ -180,6 +180,7 @@ PARTNER_ROUTES = (
     ("GET", re.compile(r"/api/tokens/topups")),
     ("GET", re.compile(r"/api/pay/requests")),
     ("POST", re.compile(r"/api/pay/requests/[a-z0-9]+/(approve|reject)")),
+    ("POST", re.compile(r"/api/clients(/preview)?")),  # the Customer EntryPoint Builder (app/customers.py)
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
 
@@ -203,12 +204,24 @@ class SecurityMiddleware:
     """Pure-ASGI middleware: login required when APP_PASSWORD is set, plus security headers."""
 
     def __init__(self, app: ASGIApp, settings: Settings, site: SiteSwitch | None = None,
-                 logins: tuple[ClientLogin, ...] = ()) -> None:
+                 logins: tuple[ClientLogin, ...] | dict[str, ClientLogin] = ()) -> None:
         self.app = app
         self.settings = settings
         self.site = site  # the dashboard's open/closed switch (None: always open)
-        self.logins = tuple(logins)  # the client pages' own logins (app/clients.py)
-        self.client_routes = {login.slug: client_routes(login.slug) for login in self.logins}
+        # The client pages' own logins (app/clients.py): a tuple, or the app's own dict (slug -> login), which is
+        # read at every request, so a customer made on a dashboard (app/customers.py) can sign in at once.
+        self._logins = logins
+        self._routes: dict[str, tuple] = {}
+
+    @property
+    def logins(self) -> tuple[ClientLogin, ...]:
+        return tuple(self._logins.values()) if isinstance(self._logins, dict) else tuple(self._logins)
+
+    def _client_routes(self, slug: str) -> tuple:
+        """What the client login of /client_<slug> may reach (nothing for a slug without a login now)."""
+        if not any(login.slug == slug for login in self.logins):
+            return ()
+        return self._routes.setdefault(slug, client_routes(slug))
 
     def _sync_report(self, scope: Scope, path: str) -> bool:
         """The Mac's report (app/sync.py): a POST to the sync path with the shared token needs no session. Without
@@ -247,7 +260,7 @@ class SecurityMiddleware:
             elif role == "partner" and not partner_allows(scope.get("method", "GET"), path):
                 blocked = (403, "This login can only use the partner dashboard.", PARTNER_PAGE)
             elif (client := client_of(role)) is not None and not _allows(
-                    self.client_routes.get(client, ()), scope.get("method", "GET"), path):
+                    self._client_routes(client), scope.get("method", "GET"), path):
                 blocked = (403, "This login can only use its own page.", f"/client_{client}")
         if blocked:
             code, detail, target = blocked

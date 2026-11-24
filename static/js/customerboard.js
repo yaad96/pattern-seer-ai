@@ -199,7 +199,8 @@ export function initCustomerBoard(root, { client }) {
         .map((t, i) => h('th', { class: i === 2 || i === 3 ? 'num' : null }, t)))),
       h('tbody', null, list.map((p) => h('tr', null,
         h('td', { class: 'nowrap' }, fmtDateTime(p.at)),
-        h('td', null, h('code', { class: 'pay-code' }, p.trx)),
+        // with the number it was paid from (the client's own; nothing about phone numbers is hidden in the app)
+        h('td', null, h('code', { class: 'pay-code' }, p.trx), p.sender ? h('div', { class: 'dash-sub', 'data-no-translate': '' }, p.sender) : null),
         h('td', { class: 'num' }, taka(p.taka)),
         h('td', { class: 'num' }, p.status === 'approved' ? h('strong', null, signed(p.tokens)) : fmtInt(p.tokens)),
         h('td', null, status(p))))));

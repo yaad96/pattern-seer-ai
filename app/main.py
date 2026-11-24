@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 import html
 import json
@@ -22,11 +23,11 @@ from PIL import Image
 from pydantic import BaseModel, Field, StrictInt, ValidationError, field_validator
 from starlette.background import BackgroundTask
 
-from app import catalog, sheets, sync, usage
-from app.clients import ClientBrand, brand_for_path, brand_page, load_clients, login_branding
+from app import catalog, customers, sheets, sync, usage
+from app.clients import ClientBrand, brand_for_path, brand_page, load_clients, login_branding, theme
 from app.config import BASE_DIR, SHEET_KEY_FILE, Settings, get_settings
 from app.imaging.io import ImageInputError, load_upload
-from app.payments import PayBook, PayError, mask_number, reason_text
+from app.payments import PayBook, PayError, reason_text
 from app.pipeline import JobError, JobManager, derives_back, uses_back_picture
 from app.providers.registry import ProviderRegistry
 from app.schemas import (
@@ -53,7 +54,7 @@ from app.security import (
     make_session,
 )
 from app.site_switch import CLOSED_STATUS, SiteSwitch
-from app.storage import SESSION_ID_RE, JobStore, is_valid_job_id, lock_outputs
+from app.storage import SESSION_ID_RE, JobStore, is_valid_job_id, lock_outputs, utcnow_iso
 from app.tokens import NotEnoughTokens, TokenBook, item_of, load_prices, panel_items
 
 __version__ = "1.0.0"
@@ -400,10 +401,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.registry = registry
     site = SiteSwitch(settings.output_dir)  # the dashboard's open/closed switch, kept in outputs/site_closed.json
     app.state.site = site
-    # The client pages /client_<name> and their own logins (app/clients.py), from the git-ignored client_assets/.
+    # The client pages /client_<name> and their own logins (app/clients.py): those written by hand in the git-ignored
+    # client_assets/, then those made on the dashboards (app/customers.py, in <output_dir>/clients/). `clients` and
+    # `logins` are the app's own, shared with the middleware: the builder adds to them while the app runs.
     try:
-        clients = load_clients(settings.client_assets_dir,
-                               (settings.app_username, settings.demo_username, settings.partner_username))
+        reserved = (settings.app_username, settings.demo_username, settings.partner_username)
+        clients = load_clients(settings.client_assets_dir, reserved)
+        clients.update(load_clients(
+            customers.folder_of(settings.output_dir), taken_slugs=tuple(clients),
+            reserved_usernames=(*reserved, *(b.login.username for b in clients.values() if b.login is not None))))
         index_page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         for slug, brand in list(clients.items()):  # a page that can't be branded is left out now, not served as 500
             try:
@@ -417,7 +423,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     logins = {b.slug: b.login for b in clients.values() if b.login is not None}
     app.state.clients = clients
     manager.client_name = lambda slug: clients[slug].name if slug in clients else slug  # for the sheet log's rows
-    app.add_middleware(SecurityMiddleware, settings=settings, site=site, logins=tuple(logins.values()))
+    app.add_middleware(SecurityMiddleware, settings=settings, site=site, logins=logins)  # the dict itself: it grows
 
     def login_brand(target: str) -> ClientBrand | None:
         """The client page a sign-in or sign-out leads to, when it has its own login and the site is open: its sign-in
@@ -690,15 +696,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """What the login may do on the two dashboards: both add tokens and check payments; only the head admin takes
         tokens back."""
         return {"can_add": True, "can_take_back": not is_limited(request), "role": who(request),
-                "waiting": pays.waiting(), "buying": pays.enabled and book.enabled}
+                "waiting": pays.waiting(), "buying": pays.enabled and book.enabled,
+                "welcome": settings.welcome_tokens if book.enabled else 0}  # what a customer made here starts with
 
-    def pay_view(pay: dict, request: Request) -> dict:
-        """A payment request for the two dashboards. The partner sees the number it was paid from masked; the head
-        admin sees all of it (the owner, 2026-11-24: "for supreme dashboard, dont conceal the customer bkash phone
-        number")."""
-        return {**pay, "client_name": client_names().get(pay["client"], pay["client"]),
-                "sender": mask_number(pay["sender"]) if is_partner(request) else pay["sender"],
-                "reason_label": reason_text(pay)}
+    def entry_point(slug: str, request: Request) -> dict | None:
+        """A client's way in, for the dashboards: its page, phone and login name, and for the head admin its
+        password too (the head admin's own list of every login; the partner sees a password only when it makes the
+        customer). None for a client without a page now."""
+        brand = clients.get(slug)
+        if brand is None:
+            return None
+        out = {"path": brand.path, "phone": brand.phone, "username": brand.login.username if brand.login else None,
+               "made_at": brand.made_at, "made_by": brand.made_by}
+        if brand.login is not None and not is_limited(request):
+            out["password"] = brand.login.password
+        return out
+
+    def pay_view(pay: dict) -> dict:
+        """A payment request for the two dashboards, with the number it was paid from in full for both (the owner,
+        2026-11-24: "there should be no concealing of any phone numbers in my app anywhere"; the partner saw it
+        masked for a few hours that day)."""
+        return {**pay, "client_name": client_names().get(pay["client"], pay["client"]), "reason_label": reason_text(pay)}
 
     def pay_mine(pay: dict) -> dict:
         """A client's own payment request, for its page: not who checked it."""
@@ -744,6 +762,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for slug, name in client_names().items():
             mine = jobs.get(slug, [])
             rows.append({"slug": slug, "name": name, "has_page": slug in clients, "balance": book.balance(slug),
+                         "phone": clients[slug].phone if slug in clients else "",
                          "used": used.get(slug, 0), "added": added.get(slug, 0), "taka": paid.get(slug, 0),
                          "jobs": len({job.id for job in mine} | charged_jobs.get(slug, set())),  # made or charged then
                          "last_job_at": mine[0].created_at if mine else None})
@@ -820,7 +839,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return rows, entries
 
     @app.get("/api/tokens/clients/{slug}")
-    async def token_client(request: Request, slug: str, days: int = Query(30, ge=0, le=3650)) -> dict:
+    async def token_client(request: Request, slug: str, days: int = Query(30, ge=0, le=3650)) -> JSONResponse:
         """One client on the client dashboard (studio and partner logins): its jobs in the last `days` days with the
         tokens each image cost (a failed image costs nothing), and the tokens added to its purse."""
         studio_or_partner(request)
@@ -830,10 +849,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         since = since_of(days)
         rows, entries = await client_rows(slug, since)
         in_period = [e for e in entries if not since or e.get("at", "") >= since]
-        return {
+        return JSONResponse({
             "enabled": book.enabled, **board_flags(request), "days": days,
             "prices": book.prices.as_dict() if book.enabled else None,
-            "payments": [pay_view(pay, request) for pay in pays.of_client(slug)],  # its bKash payments, all time
+            "entry": entry_point(slug, request),  # its page, phone and login
+            "payments": [pay_view(pay) for pay in pays.of_client(slug)],  # its bKash payments, all time
             "client": {"slug": slug, "name": names[slug], "has_page": slug in clients, "balance": book.balance(slug),
                        "available": book.available(slug),  # less what running jobs hold: the most a take-back can take
                        "used": sum(-e["tokens"] for e in in_period if e.get("type") == "charge"),
@@ -844,7 +864,92 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "by": e.get("by"), "balance": e.get("balance"), "trx": e.get("trx"),  # a bKash payment's TrxID
                         "request_id": e.get("request_id")}  # the page checks a top-up whose answer was lost
                        for e in reversed(entries) if e.get("type") != "charge"],
-        }
+        }, headers={"Cache-Control": "no-store"})
+
+    # -- the Customer EntryPoint Builder (app/customers.py, 2026-11-24): a client page made from a dashboard form ----
+
+    customer_lock = asyncio.Lock()  # one customer is made at a time: the link names and the file are checked under it
+
+    def taken_names() -> set[str]:
+        """Every link name and every login's username in use, in lower case: a new customer's link name is also its
+        username."""
+        names = {slug for slug in clients} | {login.username.casefold() for login in logins.values()}
+        return names | {n.casefold() for n in (settings.app_username, settings.demo_username, settings.partner_username) if n}
+
+    def data_uri(data: bytes, ext: str) -> str:
+        return f"data:image/{'jpeg' if ext == 'jpg' else ext};base64,{base64.b64encode(data).decode('ascii')}"
+
+    async def uploaded_logo(logo: UploadFile, colors: str) -> customers.Logo:
+        try:
+            given = customers.clean_colors(json.loads(colors) if colors.strip() else None)
+            data = await logo.read(customers.MAX_UPLOAD_BYTES + 1)
+            return await asyncio.to_thread(customers.prepare_logo, data, given)
+        except customers.CustomerError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except ValueError as exc:  # the colours weren't JSON
+            raise HTTPException(422, "The colours must be three colours like #1F4FD8.") from exc
+
+    @app.post("/api/clients/preview")
+    async def customer_preview(request: Request, name: str = Form(""), slug: str = Form(""), colors: str = Form(""),
+                               logo: UploadFile | None = File(None)) -> dict:
+        """The builder's preview (head admin and partner), nothing kept: a link name suggested from the name; whether
+        the one typed can be used; and, with a logo, the logo as the page will show it, the three colours picked from
+        it (or the ones sent) and the page's colour tokens for light and dark."""
+        studio_or_partner(request)
+        taken = taken_names()
+        out: dict = {"suggested": customers.suggest_slug(name, taken), "slug": slug,
+                     "slug_problem": customers.slug_problem(slug, taken) if slug else None,
+                     "welcome": settings.welcome_tokens if book.enabled else 0}
+        if logo is not None and logo.filename:
+            made = await uploaded_logo(logo, colors)
+            light, dark = theme(made.colors)
+            out.update(logo=data_uri(made.logo, made.logo_ext), mark=data_uri(made.mark, made.mark_ext),
+                       colors=made.colors, light=light, dark=dark)
+        return out
+
+    @app.post("/api/clients", status_code=201)
+    async def customer_create(request: Request, name: str = Form(""), phone: str = Form(""), slug: str = Form(""),
+                              colors: str = Form(""), logo: UploadFile = File(...)) -> JSONResponse:
+        """Make a customer's entry point (head admin and partner): the page /client_<slug> with the logo as uploaded,
+        the colours and the name, its own login (the link name as the username, a generated password) and the welcome
+        tokens. It works at once. The answer is the only time the partner sees the password."""
+        studio_or_partner(request)
+        try:
+            name, phone = customers.clean_name(name), customers.clean_phone(phone)
+        except customers.CustomerError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        made = await uploaded_logo(logo, colors)
+        by = who(request)
+        async with customer_lock:
+            problem = customers.slug_problem(slug, taken_names())
+            if problem:
+                raise HTTPException(409 if slug in taken_names() else 422, problem)
+            page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            try:
+                brand = await asyncio.to_thread(
+                    customers.save, customers.folder_of(settings.output_dir), slug=slug, name=name, phone=phone,
+                    logo=made, password=customers.new_password(), by=by, at=utcnow_iso(),
+                    check=lambda b: brand_page(page, b))
+            except customers.CustomerError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            except Exception as exc:  # the files couldn't be written, or the page couldn't be made from them
+                log.exception("customers: %s could not be made", slug)
+                raise HTTPException(500, "The entry point could not be made. Nothing was kept; please try again.") from exc
+            clients[slug] = brand
+            logins[slug] = brand.login
+            log.info("customers: %s made /client_%s (own login)", by, slug)
+            sheet.enqueue(sheets.customer_row(brand, by))
+            tokens = 0
+            if book.enabled and settings.welcome_tokens > 0:
+                entry = book.add(slug, settings.welcome_tokens, "Welcome tokens for a new customer", by,
+                                 request_id=f"welcome-{slug}")
+                sheet.enqueue(sheets.topup_row(entry, name))
+                tokens = entry["tokens"]
+        return JSONResponse({
+            "client": {"slug": slug, "name": name, "phone": phone, "path": brand.path,
+                       "username": brand.login.username, "password": brand.login.password},
+            "tokens": tokens, "balance": book.balance(slug) if book.enabled else 0,
+        }, status_code=201, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/tokens/mine")
     async def my_tokens(request: Request, client: str = "") -> dict:
@@ -967,7 +1072,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def pay_requests(request: Request) -> dict:
         """Every bKash payment, newest first (head admin and partner)."""
         studio_or_partner(request)
-        return {"payments": [pay_view(pay, request) for pay in pays.all()], **board_flags(request)}
+        return {"payments": [pay_view(pay) for pay in pays.all()], **board_flags(request)}
 
     @app.post("/api/pay/requests/{pay_id}/approve")
     async def pay_approve(request: Request, pay_id: str) -> dict:
@@ -993,7 +1098,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(exc)) from exc
         sheet.enqueue(sheets.payment_row(done, sheets.PAY_APPROVED, client_names().get(pay["client"], pay["client"]),
                                          balance=entry["balance"]))
-        return {"payment": pay_view(done, request), "balance": book.balance(pay["client"])}
+        return {"payment": pay_view(done), "balance": book.balance(pay["client"])}
 
     @app.post("/api/pay/requests/{pay_id}/reject")
     async def pay_reject(request: Request, pay_id: str, body: PayDecision) -> dict:
@@ -1005,7 +1110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(exc.status, str(exc)) from exc
         sheet.enqueue(sheets.payment_row(done, sheets.PAY_REJECTED, client_names().get(done["client"], done["client"]),
                                          balance=book.balance(done["client"]), reason=reason_text(done)))
-        return {"payment": pay_view(done, request)}
+        return {"payment": pay_view(done)}
 
     # -- the Mac's Dashboard on the online server (app/sync.py) --------------------------------------------------
 

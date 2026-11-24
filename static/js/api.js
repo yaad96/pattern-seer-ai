@@ -268,6 +268,18 @@ export const api = {
     return request('POST', '/api/pay/requests', { json: { tokens, trx, sender, request_id: requestId } });
   },
 
+  /** POST /api/clients/preview (multipart: name, slug, colors=JSON, logo) -> {suggested, slug_problem, welcome, and
+   * with a logo: logo, mark, colors, light, dark}: the Customer EntryPoint Builder's preview; nothing is kept. */
+  customerPreview(form) {
+    return request('POST', '/api/clients/preview', { form });
+  },
+
+  /** POST /api/clients (multipart: name, phone, slug, colors=JSON, logo) -> {client: {slug, name, phone, path,
+   * username, password}, tokens, balance}: a customer's entry point, working at once (head admin and partner). */
+  customerCreate(form) {
+    return request('POST', '/api/clients', { form });
+  },
+
   /** GET /api/admin/sheet-script -> {script, version}: the Apps Script for the Google Sheet, with this machine's
    * secret in it (the head admin; the Supreme dashboard's Settings copies it for pasting into the sheet). */
   sheetScript() {

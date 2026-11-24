@@ -40,7 +40,8 @@ BD = timezone(timedelta(hours=6), "Asia/Dhaka")  # Bangladesh: UTC+6 all year
 
 # The sheet's columns, in order (the script adds any new one to the header row).
 COLUMNS = [
-    "Row ID", "Event", "Machine", "Time (UTC)", "Time (Bangladesh)", "Login", "Customer", "Client ID", "Job ID",
+    "Row ID", "Event", "Machine", "Time (UTC)", "Time (Bangladesh)", "Login", "Customer", "Client ID",
+    "Customer phone", "Job ID",
     "Job started (UTC)", "Job started (Bangladesh)", "Took (s)", "Type", "What was asked", "Back made from",
     "Status", "Images made", "Images failed", "Failed parts", "Tokens charged", "Token items", "Tokens added",
     "Tokens left after", "Taka received", "Top-up note", "Added by", "bKash TrxID", "bKash sender", "Checked by",
@@ -185,6 +186,18 @@ def topup_row(entry: dict, customer: str = "", *, event: str | None = None) -> d
         "Taka received": entry["taka"] if isinstance(entry.get("taka"), int) else "",
         "Top-up note": _text(entry.get("note") or ""),
         "Added by": who,
+    }
+
+
+def customer_row(brand, by: str) -> dict:
+    """A customer made with the dashboards' builder (app/customers.py): who made it, its link, login name and phone.
+    Never its password."""
+    at_utc, at_bd = _times(brand.made_at)
+    return {
+        "Event": "Customer added", "Time (UTC)": at_utc, "Time (Bangladesh)": at_bd, "Login": WHO.get(by, by),
+        "Customer": brand.name, "Client ID": brand.slug, "Customer phone": brand.phone,
+        "Top-up note": f"Entry point {brand.path}, username {brand.login.username if brand.login else ''}",
+        "Added by": WHO.get(by, by),
     }
 
 
