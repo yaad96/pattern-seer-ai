@@ -708,7 +708,7 @@ export function startBoard(options) {
     function showResult(res) {
       const c = res.client;
       const link = `${origin}${c.path}`;
-      const message = [`${c.name}: আপনার জার্সি ডিজাইন পেজ রেডি।`, `লিংক: ${link}`, `ইউজারনেম: ${c.username}`, `পাসওয়ার্ড: ${c.password}`,
+      const message = [`${c.name}: আপনার অ্যাপটি রেডি হয়েছে।`, `লিংক: ${link}`, `ইউজারনেম: ${c.username}`, `পাসওয়ার্ড: ${c.password}`,
         res.tokens ? `আপনার অ্যাকাউন্টে ${res.tokens} টোকেন অ্যাড করা হয়েছে।` : null].filter(Boolean).join('\n');
       const area = h('textarea', { class: 'input builder-message', readonly: true, rows: '5', 'aria-label': 'A message for the customer' });
       area.value = message;
