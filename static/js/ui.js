@@ -22,13 +22,14 @@ function topDialog() {
 
 const TOAST_ICONS = { info: 'info', success: 'check', warning: 'alert', error: 'alert' };
 
+/** raw: shown as written, never translated (the English Dashboard's own messages). */
 export function toast(message, options) {
-  const { kind = 'info', timeout } = options || {};
+  const { kind = 'info', timeout, raw = false } = options || {};
   const dlg = topDialog();
   const host = (dlg && dlg.querySelector('.toasts')) || document.getElementById('toasts');
   if (!host) return;
   let timer = 0;
-  const el = h('div', { class: ['toast', `toast-${kind}`], role: kind === 'error' ? 'alert' : 'status' },
+  const el = h('div', { class: ['toast', `toast-${kind}`], role: kind === 'error' ? 'alert' : 'status', 'data-no-translate': raw ? '' : null },
     h('span', { class: 'toast-icon' }, icon(TOAST_ICONS[kind] || 'info')),
     h('div', { class: 'toast-text' }, message),
     h('button', { type: 'button', class: 'toast-close', 'aria-label': 'Dismiss', onClick: () => remove() }, icon('x')));
@@ -128,9 +129,9 @@ export function showDialog(dlg, onClose) {
   return dlg;
 }
 
-export function modal({ title, body, footer, className, onClose }) {
+export function modal({ title, body, footer, className, onClose, raw = false }) {
   const titleId = uid('dialog-title');
-  const dlg = h('dialog', { class: ['modal', className], 'aria-labelledby': titleId });
+  const dlg = h('dialog', { class: ['modal', className], 'aria-labelledby': titleId, 'data-no-translate': raw ? '' : null });
   dlg.appendChild(h('div', { class: 'modal-panel' },
     h('header', { class: 'modal-header' },
       h('h2', { class: 'modal-title', id: titleId }, title),
@@ -140,12 +141,12 @@ export function modal({ title, body, footer, className, onClose }) {
   return showDialog(dlg, onClose);
 }
 
-export function confirmDialog({ title, message, confirmLabel, danger }) {
+export function confirmDialog({ title, message, confirmLabel, danger, raw = false }) {
   return new Promise((resolve) => {
     let confirmed = false;
     const cancel = h('button', { type: 'button', class: 'btn' }, 'Cancel');
     const ok = h('button', { type: 'button', class: ['btn', danger ? 'btn-danger-solid' : 'btn-primary'] }, confirmLabel || 'Confirm');
-    const dlg = modal({ title, body: h('p', null, message), footer: [cancel, ok], className: 'modal-sm', onClose: () => resolve(confirmed) });
+    const dlg = modal({ title, body: h('p', null, message), footer: [cancel, ok], className: 'modal-sm', onClose: () => resolve(confirmed), raw });
     cancel.addEventListener('click', () => closeDialog(dlg));
     ok.addEventListener('click', () => {
       confirmed = true;

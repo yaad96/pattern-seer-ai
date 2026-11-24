@@ -40,6 +40,11 @@ class SiteSwitch:
             return {"closed": True, "since": None}
         return {"closed": bool(data.get("closed")), "since": data.get("since")}
 
+    def reload(self) -> None:
+        """Read the switch again: main.py calls it right after the server takes the output folder (a server still
+        stopping when this one was made may have switched it since)."""
+        self.state = self._load()
+
     @property
     def closed(self) -> bool:
         return bool(self.state["closed"])

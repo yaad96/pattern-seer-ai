@@ -9,6 +9,7 @@ import re
 import secrets
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import quote
 
@@ -16,13 +17,16 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import Settings
 from app.site_switch import CLOSED_DETAIL, CLOSED_STATUS, SiteSwitch
+from app.sync import PATH as SYNC_PATH
+from app.sync import token_ok
 
 SESSION_COOKIE = "jhs_session"
 SESSION_DAYS = 30
 PUBLIC_PATHS = frozenset({"/api/health", "/login", "/logout"})
 API_PREFIXES = ("/api/", "/files/")
 # While the site is closed (the dashboard's switch), these still answer everyone: the login page, so the studio login
-# can always get in (a demo sign-in is refused there), signing out, and the health check.
+# can always get in (a demo sign-in is refused there), signing out, and the health check. (The Mac's report, a POST to
+# /api/sync/report with the sync token, needs no session and is taken while closed too: see _sync_report.)
 OPEN_WHEN_CLOSED = PUBLIC_PATHS
 
 SECURITY_HEADERS = [
@@ -32,26 +36,50 @@ SECURITY_HEADERS = [
 ]
 
 
-def _session_key(settings: Settings, role: str = "full") -> bytes:
+CLIENT_ROLE = "client:"  # a client login's role is "client:<slug>"
+
+
+@dataclass(frozen=True)
+class ClientLogin:
+    """A client page's own login (2026-11-22, app/clients.py, set in client_assets/clients.json): it may use only its
+    page /client_<slug>, the calls that page makes and the jobs it made itself."""
+    slug: str
+    username: str
+    password: str = field(repr=False)  # never in a log or a traceback
+
+
+def client_of(role: str | None) -> str | None:
+    """The client page a role belongs to ("client:<slug>" -> "<slug>"), else None."""
+    return role[len(CLIENT_ROLE):] if role and role.startswith(CLIENT_ROLE) else None
+
+
+def _session_key(settings: Settings, role: str = "full", login: ClientLogin | None = None) -> bytes:
     # Derived from the credentials, so changing a password signs out everyone who used it.
-    if role == "demo":
+    if login is not None:
+        material = f"jersey-hd-studio|client|{login.slug}|{login.username}|{login.password}"
+    elif role == "demo":
         material = f"jersey-hd-studio|demo|{settings.demo_username}|{settings.demo_password}"
-    else:  # unchanged, so studio sessions made before the demo login stay valid
+    elif role == "partner":
+        material = f"jersey-hd-studio|partner|{settings.partner_username}|{settings.partner_password}"
+    elif role == "full":  # unchanged, so studio sessions made before the demo login stay valid
         material = f"jersey-hd-studio|{settings.app_username}|{settings.app_password}"
+    else:  # a client role without its login: refuse, rather than fall back to the studio's key
+        raise ValueError(f"no session key for the role {role!r}")
     return hashlib.sha256(material.encode()).digest()
 
 
-def make_session(settings: Settings, role: str = "full") -> str:
+def make_session(settings: Settings, role: str = "full", login: ClientLogin | None = None) -> str:
+    """A session token for the studio login, the demo login, or (with `login`) a client login."""
     payload = f"{int(time.time()) + SESSION_DAYS * 86400}"
-    signature = hmac.new(_session_key(settings, role), payload.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(_session_key(settings, role, login), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
 
-def _signed(settings: Settings, token: str, role: str) -> bool:
+def _signed(settings: Settings, token: str, role: str, login: ClientLogin | None = None) -> bool:
     expires, _, signature = token.partition(".")
     if not expires.isdigit() or int(expires) < time.time():
         return False
-    expected = hmac.new(_session_key(settings, role), expires.encode(), hashlib.sha256).hexdigest()
+    expected = hmac.new(_session_key(settings, role, login), expires.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
 
 
@@ -59,12 +87,18 @@ def valid_session(settings: Settings, token: str) -> bool:
     return _signed(settings, token, "full")
 
 
-def session_role(settings: Settings, token: str) -> str | None:
-    """'full' (the studio login), 'demo' (the demo login: /customerep only) or None (not signed in)."""
+def session_role(settings: Settings, token: str, logins: tuple[ClientLogin, ...] = ()) -> str | None:
+    """'full' (the studio login), 'demo' (the demo login: /customerep only), 'partner' (the client dashboard only),
+    'client:<slug>' (a client login: its own page only) or None (not signed in)."""
     if _signed(settings, token, "full"):
         return "full"
     if settings.demo_password and _signed(settings, token, "demo"):
         return "demo"
+    if settings.partner_password and _signed(settings, token, "partner"):
+        return "partner"
+    for login in logins:
+        if _signed(settings, token, "client", login):
+            return CLIENT_ROLE + login.slug
     return None
 
 
@@ -74,24 +108,36 @@ def check_credentials(settings: Settings, username: str, password: str) -> bool:
     return user_ok and pwd_ok
 
 
-def credentials_role(settings: Settings, username: str, password: str) -> str | None:
-    """Which login these are: 'full', 'demo' (when a demo password is set) or None."""
+def _same(given: str, expected: str) -> bool:
+    return secrets.compare_digest(given.encode(), expected.encode())
+
+
+def credentials_role(settings: Settings, username: str, password: str,
+                     logins: tuple[ClientLogin, ...] = ()) -> str | None:
+    """Which login these are: 'full', 'demo' / 'partner' (when their passwords are set), 'client:<slug>' or None."""
     full = check_credentials(settings, username, password)
-    demo = (
-        secrets.compare_digest(username.encode(), settings.demo_username.encode())
-        and secrets.compare_digest(password.encode(), settings.demo_password.encode())
-    )
+    demo = _same(username, settings.demo_username) and _same(password, settings.demo_password)
+    partner = _same(username, settings.partner_username) and _same(password, settings.partner_password)
     if full:
         return "full"
-    return "demo" if demo and settings.demo_password else None
+    if demo and settings.demo_password:
+        return "demo"
+    if partner and settings.partner_password:
+        return "partner"
+    for login in logins:
+        if _same(username, login.username) and _same(password, login.password):
+            return CLIENT_ROLE + login.slug
+    return None
 
 
-# What the demo login may reach: the demo page, its files and the calls it makes. The routes also check that a job
-# was made with the demo login (Job.demo), so other jobs and their files answer 404.
-DEMO_ROUTES = (
-    ("GET", re.compile(r"/customerep/?")),
+# What the demo page and the client pages call besides the page itself: its files and its API calls. The routes also
+# check that a job was made with the same login (Job.demo, Job.client; main.login_scope), so other jobs and their
+# files answer 404.
+PAGE_ROUTES = (
     ("GET", re.compile(r"/static/.+")),
     ("GET", re.compile(r"/api/config")),
+    ("GET", re.compile(r"/api/tokens/balance")),  # a client page's purse (the demo login just gets "no purse")
+    ("GET", re.compile(r"/api/tokens/mine")),  # a client page's "Customer dashboard" tab (likewise)
     ("POST", re.compile(r"/api/recreate")),
     ("POST", re.compile(r"/api/design")),
     ("GET", re.compile(r"/api/jobs/[^/]+")),
@@ -99,11 +145,37 @@ DEMO_ROUTES = (
     ("GET", re.compile(r"/api/jobs/[^/]+/panels-(eps|png)\.zip")),
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
+# What the demo login may reach: the demo page /customerep and what it calls (not the client pages).
+DEMO_ROUTES = (("GET", re.compile(r"/customerep/?")), *PAGE_ROUTES)
+
+
+def client_routes(slug: str) -> tuple:
+    """What a client login may reach: its own page /client_<slug> and what it calls; no other page of the app."""
+    return (("GET", re.compile(rf"/client_{re.escape(slug)}/?")), *PAGE_ROUTES)
+
+
+def _allows(routes: tuple, method: str, path: str) -> bool:
+    method = "GET" if method == "HEAD" else method
+    return any(method == m and pattern.fullmatch(path) for m, pattern in routes)
 
 
 def demo_allows(method: str, path: str) -> bool:
-    method = "GET" if method == "HEAD" else method
-    return any(method == m and pattern.fullmatch(path) for m, pattern in DEMO_ROUTES)
+    return _allows(DEMO_ROUTES, method, path)
+
+
+# What the partner login may reach (2026-11-23): the client dashboard, its read-only data, and the preview pictures of
+# client jobs (main.py's files route allows only previews of jobs made with a client login).
+PARTNER_ROUTES = (
+    ("GET", re.compile(r"/client-dashboard/?")),
+    ("GET", re.compile(r"/static/.+")),
+    ("GET", re.compile(r"/api/tokens/clients")),
+    ("GET", re.compile(r"/api/tokens/clients/[a-z0-9]+")),
+    ("GET", re.compile(r"/files/[^/]+/[^/]+")),
+)
+
+
+def partner_allows(method: str, path: str) -> bool:
+    return _allows(PARTNER_ROUTES, method, path)
 
 
 def _session_cookie(scope: Scope) -> str:
@@ -120,18 +192,39 @@ def _session_cookie(scope: Scope) -> str:
 class SecurityMiddleware:
     """Pure-ASGI middleware: login required when APP_PASSWORD is set, plus security headers."""
 
-    def __init__(self, app: ASGIApp, settings: Settings, site: SiteSwitch | None = None) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings, site: SiteSwitch | None = None,
+                 logins: tuple[ClientLogin, ...] = ()) -> None:
         self.app = app
         self.settings = settings
         self.site = site  # the dashboard's open/closed switch (None: always open)
+        self.logins = tuple(logins)  # the client pages' own logins (app/clients.py)
+        self.client_routes = {login.slug: client_routes(login.slug) for login in self.logins}
+
+    def _sync_report(self, scope: Scope, path: str) -> bool:
+        """The Mac's report (app/sync.py): a POST to the sync path with the shared token needs no session. Without
+        the token it is like any other path (401 signed out, the closed site's 404), so it doesn't stand out."""
+        if path != SYNC_PATH or scope.get("method") != "POST" or not self.settings.sync_token:
+            return False
+        header = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"authorization"), None)
+        return token_ok(self.settings.sync_token, header)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        role = session_role(self.settings, _session_cookie(scope)) if self.settings.app_password else "full"
-        scope["jhs_role"] = role  # the routes limit the demo login to its own jobs
+        if self._sync_report(scope, path):
+            scope["jhs_role"] = None
+
+            async def send_sync(message: dict) -> None:
+                if message["type"] == "http.response.start":
+                    message["headers"] = list(message.get("headers", [])) + SECURITY_HEADERS
+                await send(message)
+
+            await self.app(scope, receive, send_sync)
+            return
+        role = session_role(self.settings, _session_cookie(scope), self.logins) if self.settings.app_password else "full"
+        scope["jhs_role"] = role  # the routes limit the demo login and the client logins to their own jobs
         if self.site is not None and self.site.closed and role != "full" and path not in OPEN_WHEN_CLOSED:
             await self._send_closed(send, path)
             return
@@ -141,6 +234,11 @@ class SecurityMiddleware:
                 blocked = (401, "Login required.", f"/login?next={quote(path, safe='')}")
             elif role == "demo" and not demo_allows(scope.get("method", "GET"), path):
                 blocked = (403, "The demo login can only use the demo page.", "/customerep")
+            elif role == "partner" and not partner_allows(scope.get("method", "GET"), path):
+                blocked = (403, "This login can only use the client dashboard.", "/client-dashboard")
+            elif (client := client_of(role)) is not None and not _allows(
+                    self.client_routes.get(client, ()), scope.get("method", "GET"), path):
+                blocked = (403, "This login can only use its own page.", f"/client_{client}")
         if blocked:
             code, detail, target = blocked
             if path.startswith(API_PREFIXES):

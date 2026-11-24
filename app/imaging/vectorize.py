@@ -124,11 +124,15 @@ def _fit_long_edge(img: Image.Image, low: int, high: int) -> Image.Image:
 
 
 def _palette(rgb: np.ndarray, opaque: np.ndarray | None, colors: int) -> np.ndarray:
-    """Palette from a deterministic random sample, preferring pixels inside flat areas over anti-aliased blends."""
+    """Palette from a deterministic random sample, preferring pixels inside flat areas over anti-aliased blends. The
+    sample is mirror-symmetric (each position is also taken mirrored left-right, and flatness is judged on both
+    sides), so an image and its mirror image get the same palette: a back panel mirrored from the front exports the
+    front's colours (2026-11-23: they differed by a few units)."""
     height, width, _ = rgb.shape
     rng = np.random.default_rng(0)
-    ys = rng.integers(0, height, PALETTE_SAMPLES)
-    xs = rng.integers(0, width, PALETTE_SAMPLES)
+    ys = rng.integers(0, height, PALETTE_SAMPLES // 2)
+    xs = rng.integers(0, width, PALETTE_SAMPLES // 2)
+    ys, xs = np.concatenate([ys, ys]), np.concatenate([xs, width - 1 - xs])
     if opaque is not None:
         inside = opaque[ys, xs]
         if not inside.any():  # only a sliver is opaque: use those pixels directly
@@ -136,8 +140,10 @@ def _palette(rgb: np.ndarray, opaque: np.ndarray | None, colors: int) -> np.ndar
         ys, xs = ys[inside], xs[inside]
     pixels = rgb[ys, xs].astype(np.int16)
     right = rgb[ys, np.minimum(xs + 1, width - 1)]
+    left = rgb[ys, np.maximum(xs - 1, 0)]
     below = rgb[np.minimum(ys + 1, height - 1), xs]
-    flat = (np.abs(pixels - right).max(axis=1) <= EDGE_TOLERANCE) & (np.abs(pixels - below).max(axis=1) <= EDGE_TOLERANCE)
+    flat = ((np.abs(pixels - right).max(axis=1) <= EDGE_TOLERANCE) & (np.abs(pixels - left).max(axis=1) <= EDGE_TOLERANCE)
+            & (np.abs(pixels - below).max(axis=1) <= EDGE_TOLERANCE))
     if flat.sum() >= MIN_FLAT_SAMPLES:
         pixels = pixels[flat]
     return quantize_pixels(pixels.astype(np.uint8), colors)[0]

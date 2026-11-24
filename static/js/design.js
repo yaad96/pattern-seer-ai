@@ -4,7 +4,7 @@
  * latest successful job). The session (session id, job ids, active parent) persists in
  * localStorage and is restored on reload.
  */
-import { api, fileUrl, getConfig } from './api.js';
+import { api, fileSig, fileUrl, getConfig, pressId } from './api.js';
 import {
   h, icon, uid, clear, replace, appendAll, fmtDateTime, fmtRelative, normalizeHex, storage,
   imageFilesFrom, hasFiles, checkImageFile,
@@ -12,6 +12,7 @@ import {
 import { createProgress, isActive, statusBadge, watchJob } from './jobs.js';
 import { createResults, customerError, customerWarnings, modelLabel, renderBrief, withoutModel } from './results.js';
 import { createOutputSettings, openPromptPreview, pickKnown } from './settings.js';
+import { needHint, onPurse, purse, refreshPurse, shortage } from './tokens.js';
 import {
   announce, callout, choiceCards, confirmDialog, field, inputEl, loadingRow, openLightbox, segmented, selectEl,
   switchEl, toast,
@@ -226,12 +227,15 @@ function createDesignSettings(config, onChange, customer) {
 
 /** customer: the /customerep page for showing clients a demo: no AI designer or output settings, prompt, model
  * names or costs, and its own saved conversation. */
-export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
+/** client: a client page (/client_<name>): each message's price from the client's purse of our tokens (tokens.js);
+ * Send stays off when the purse can't cover one (the server refuses it too). */
+export function initDesign(root, { customer = false, keyPrefix = null, client = '' } = {}) {
   const config = getConfig();
   const limits = config.limits;
   // each page keeps its own chat: /customerep and /experiment (customer), and /panels (the studio's full Design)
   const prefix = keyPrefix || (customer ? 'customer' : null);
   const sessionKey = prefix ? `${prefix}.design.session` : SESSION_KEY;
+  const pressKey = prefix ? `${prefix}.design.press` : 'design.press'; // a Send not answered yet (api.pressId)
   const state = { sessionId: null, turns: [], parent: null, epoch: 0, attachments: [], sending: false, loading: false };
   const settings = createDesignSettings(config, () => updateComposer(), customer);
   const progressOpts = { stageText: customer ? withoutModel : null };
@@ -283,6 +287,7 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
   const sendLabel = h('span', { class: 'composer-send-label' }, 'Send');
   const sendBtn = h('button', { type: 'submit', class: 'btn btn-primary' }, icon('send'), sendLabel);
   const counter = h('span', { class: 'counter' });
+  const tokenHint = client ? h('span', { class: 'token-need', hidden: true, 'aria-live': 'polite' }) : null;
   const hintId = uid('composer-hint');
   textarea.setAttribute('aria-describedby', hintId);
   const composer = h('form', { class: 'composer' },
@@ -294,7 +299,7 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
     h('div', { class: 'composer-foot' },
       h('span', { class: 'hint', id: hintId }, customer ? 'Enter to send · Shift+Enter for a new line · drop images to attach'
         : 'Enter to send · Shift+Enter for a new line · paste or drop images to attach'),
-      counter),
+      tokenHint, counter),
     attachInput);
   composer.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -351,7 +356,18 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
   function updateComposer() {
     const running = busyTurn();
     const len = textarea.value.length;
-    sendBtn.disabled = state.sending || state.loading || running || !textarea.value.trim();
+    const short = client ? shortage(['design']) : ''; // a client page: the purse must cover one message
+    sendBtn.disabled = state.sending || state.loading || running || !textarea.value.trim() || Boolean(short);
+    if (tokenHint) { // a polite live region: rebuilt only when what it says changes, not on every keystroke
+      const p = purse();
+      const key = short || (p ? `${p.charged}|${p.available}|${p.prices.design}` : '');
+      if (key !== tokenHint.dataset.key) {
+        tokenHint.dataset.key = key;
+        replace(tokenHint, short || needHint(['design'], { each: true }));
+      }
+      tokenHint.classList.toggle('is-short', Boolean(short));
+      tokenHint.hidden = !p;
+    }
     sendLabel.textContent = state.sending ? 'Sending…' : (running ? 'Working…' : 'Send');
     attachBtn.disabled = state.attachments.length >= attachLimit();
     textarea.placeholder = state.parent
@@ -566,6 +582,7 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
 
   function finishTurn(turn, job) {
     turn.unwatch = null;
+    if (client) refreshPurse(); // charged now when the design came out
     const ok = job.variants.find((v) => v.status === 'succeeded');
     if (ok && turn.epoch === state.epoch) setParent({ jobId: job.id, variant: ok.index }, false);
     else renderIndicator();
@@ -702,26 +719,39 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
       toast(`The message is too long (max ${limits.max_message_chars} characters).`, { kind: 'error' });
       return;
     }
+    const short = client ? shortage(['design']) : '';
+    if (short) { // Enter sends without the (disabled) button
+      toast(short, { kind: 'warning' });
+      return;
+    }
     const parent = state.parent;
     const attachments = state.attachments.slice();
+    const options = settings.values();
+    // the same press again (e.g. after a lost answer) gets the message it already sent, not a second, charged one
+    const requestId = pressId(storage, pressKey, JSON.stringify(
+      [message, options, state.sessionId, parent, attachments.map((a) => fileSig(a.file))]));
     state.sending = true;
     updateComposer();
     let res;
     try {
       res = await api.design({
         message,
-        options: settings.values(),
+        options,
         sessionId: state.sessionId,
         parent,
         attachments: attachments.map((a) => a.file),
+        requestId,
       });
-    } catch (err) {
+    } catch (err) { // the press stays: sent again unchanged, it is the same request (the server decides)
       state.sending = false;
       updateComposer();
       toast(err.message, { kind: 'error' });
+      if (client) refreshPurse(); // e.g. 402: the purse changed meanwhile
       return;
     }
+    storage.remove(pressKey); // answered: the next message is a new one
     state.sending = false;
+    if (client) refreshPurse(); // the message's price is now held
     if (res.session_id && SESSION_RE.test(res.session_id)) state.sessionId = res.session_id;
     state.attachments = [];
     renderThumbs();
@@ -825,6 +855,7 @@ export function initDesign(root, { customer = false, keyPrefix = null } = {}) {
     renderWelcome();
   }
   updateComposer();
+  if (client) onPurse(() => updateComposer()); // the purse read or changed: the hint and Send follow it
 
   return { addAttachments, continueFrom, removeJob };
 }

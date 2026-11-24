@@ -25,4 +25,6 @@ if ! grep -q '[^[:space:]]' .openai_api_key; then
   echo ""
 fi
 
-exec .venv/bin/python -m uvicorn app.main:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}"
+# --timeout-graceful-shutdown: on Ctrl+C, stop waiting after 10 s for a stalled upload, so the app's own shutdown
+# always runs (it ends and settles the jobs under way)
+exec .venv/bin/python -m uvicorn app.main:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}" --timeout-graceful-shutdown 10

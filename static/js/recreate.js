@@ -2,7 +2,7 @@
  * Recreate tab: upload a low-res reference jersey, choose RecreateOptions, generate,
  * then review results (before/after, palette) and download PNG / EPS / SVG.
  */
-import { api, getConfig } from './api.js';
+import { api, fileSig, getConfig, pressId } from './api.js';
 import {
   h, icon, uid, clear, replace, fmtBytes, fmtDims, fmtDateTime, fmtRelative, storage,
   imageFilesFrom, hasFiles, checkImageFile, readImageSize,
@@ -10,6 +10,7 @@ import {
 import { createProgress, isActive, statusBadge, watchJob } from './jobs.js';
 import { createResults, customerError, customerWarnings, jobCostText, withoutModel } from './results.js';
 import { createOutputSettings, openPromptPreview, pickKnown } from './settings.js';
+import { needHint, onPurse, panelItems, refreshPurse, shortage } from './tokens.js';
 import {
   announce, callout, checkboxEl, choiceCards, choiceExample, field, segmented, setBusy, switchEl, toast, toggleGroup,
 } from './ui.js';
@@ -263,12 +264,15 @@ function stepCard(step, title, children) {
  * settings, prompt, model names, costs or image details. staff: /panels, the studio's panel page (2026-11-07): the
  * same flow plus everything the studio page shows (output settings, View prompt, costs, image details) and the back
  * as the front mirrored or copied. The studio page itself no longer makes panels: it links to /panels when the server
- * serves that page (config.panels_page), and builds its panel row hidden. */
-export function initRecreate(root, { customer = false, staff = false, keyPrefix = 'customer' } = {}) {
+ * serves that page (config.panels_page), and builds its panel row hidden. client: a client page (/client_<name>):
+ * what the job needs from the client's purse of our tokens (tokens.js), and Generate stays off when it can't cover it
+ * (the server refuses such a job too). */
+export function initRecreate(root, { customer = false, staff = false, keyPrefix = 'customer', client = '' } = {}) {
   const config = getConfig();
   const defaults = config.defaults.recreate;
   const maxMb = config.limits.max_upload_mb;
   const LAST_JOB_KEY = customer ? `${keyPrefix}.lastJob` : 'recreate.lastJob';
+  const PRESS_KEY = customer ? `${keyPrefix}.press` : 'recreate.press'; // a Generate not answered yet (api.pressId)
   const forClient = customer && !staff; // hide the studio's details (models, costs, prompts, sizes, badges)
   let busy = false;
   let current = null;
@@ -638,11 +642,21 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
   const generateLabel = h('span', null, 'Generate');
   const generateBtn = h('button', { type: 'button', class: 'btn btn-primary btn-lg', onClick: generate }, icon('sparkles'), generateLabel);
   const readyHint = h('p', { class: 'hint', 'aria-live': 'polite' });
+  const tokenHint = client ? h('p', { class: 'hint token-need', hidden: true }) : null;
+
+  /** A client page: the job's items as the server prices them (the back from its own picture, or from the front). */
+  function jobItems() {
+    const sel = chosen();
+    const own = sel.includes('front') && sel.includes('back') && !backFromFront();
+    return panelItems({ panels: sel, back: own ? 'image' : 'mirror' });
+  }
 
   /** What is still missing before Generate can run ('' = ready); Generate stays off until then. */
   function missingInput() {
     if (mode.value === 'panels' && !chosen().length) return 'Choose at least one panel.';
     if (customer) {
+      const short = client ? shortage(jobItems()) : ''; // a client page: the purse must cover the job, said first
+      if (short) return short;
       const empty = customerSlots().find(([, s]) => !s.state.file);
       return empty ? { front: 'Add the front picture.', back: 'Add the back picture.', sleeve: 'Add the sleeve picture.' }[empty[0]] : '';
     }
@@ -658,6 +672,11 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     if (!busy) generateBtn.disabled = Boolean(missing);
     readyHint.textContent = missing;
     readyHint.hidden = !missing;
+    if (tokenHint) { // "This needs N tokens · You have M", unless the shortage itself is the hint
+      const hint = chosen().length && !shortage(jobItems()) ? needHint(jobItems()) : null;
+      replace(tokenHint, hint);
+      tokenHint.hidden = !hint;
+    }
   }
 
   function showPrompt() {
@@ -690,25 +709,32 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
       return;
     }
     const options = currentOptions();
+    let files; // the picture, the back picture and the sleeve picture, as sent
+    if (customer) {
+      const sel = chosen();
+      const own = sel.includes('front') && sel.includes('back') && !backFromFront();
+      files = [customerSlots()[0][1].state.file, own ? back.state.file : null,
+        sel.includes('sleeve') && sel.length > 1 ? cust.sleeve.state.file : null];
+    } else {
+      files = [front.state.file, options.back === 'image' ? back.state.file : null, null];
+    }
+    // the same press again (e.g. after a lost answer) gets the job it already made, not a second, charged one
+    const requestId = pressId(storage, PRESS_KEY, JSON.stringify([files.map(fileSig), options]));
     busy = true;
     setBusy(generateBtn, true, 'Uploading…');
     let res;
     try {
-      if (customer) {
-        const sel = chosen();
-        const own = sel.includes('front') && sel.includes('back') && !backFromFront();
-        res = await api.recreate(customerSlots()[0][1].state.file, options, own ? back.state.file : null,
-          sel.includes('sleeve') && sel.length > 1 ? cust.sleeve.state.file : null);
-      } else {
-        res = await api.recreate(front.state.file, options, options.back === 'image' ? back.state.file : null);
-      }
-    } catch (err) {
+      res = await api.recreate(files[0], options, files[1], files[2], requestId);
+    } catch (err) { // the press stays: pressed again unchanged, it is the same request (the server decides)
       busy = false;
       setBusy(generateBtn, false);
       syncReady();
       toast(err.message, { kind: 'error' });
+      if (client) refreshPurse(); // e.g. 402: the purse changed meanwhile
       return;
     }
+    storage.remove(PRESS_KEY); // answered: the next press is a new one
+    if (client) refreshPurse(); // the job's price is now held
     setBusy(generateBtn, true, 'Generating…');
     storage.set(LAST_JOB_KEY, res.job_id);
     showJob(res.job_id, true);
@@ -776,7 +802,11 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
 
   /** A failed image generated again: ask the server, then watch the job again until it is done. */
   async function retryVariant(view, job, v) {
-    await api.retryVariant(job.id, v.index);
+    try {
+      await api.retryVariant(job.id, v.index);
+    } finally {
+      if (client) refreshPurse(); // held now, or refused (402)
+    }
     if (view !== current) return;
     if (view.unwatch) view.unwatch();
     view.fresh = false; // the card itself says how it ended
@@ -825,6 +855,7 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
     if (meta.done) {
       view.progress.stop();
       release(view);
+      if (client) refreshPurse(); // charged now: each image that came out
       const ok = job.variants.filter((v) => v.status === 'succeeded').length;
       if (job.status === 'failed') {
         const why = forClient ? customerError(job.error) : job.error || 'unknown error';
@@ -855,9 +886,10 @@ export function initRecreate(root, { customer = false, staff = false, keyPrefix 
         : stepCard(2, 'What to make', [mode.el, panelPick && panelPick.el]),
       cleanup,
       outputCard,
-      h('div', { class: 'form-actions' }, promptBtn, generateBtn, readyHint)),
+      h('div', { class: 'form-actions' }, promptBtn, generateBtn, readyHint, tokenHint)),
     resultsCard));
   syncMode();
+  if (client) onPurse(() => syncReady()); // the purse read or changed: the hint and Generate follow it
 
   const last = storage.get(LAST_JOB_KEY, null);
   if (typeof last === 'string' && JOB_ID_RE.test(last)) showJob(last, false);

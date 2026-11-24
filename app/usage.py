@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
+from app.storage import append_line
+
 log = logging.getLogger(__name__)
 
 LEDGER = "usage_ledger.jsonl"
@@ -27,6 +29,8 @@ def job_meta(job) -> dict:
     o = job.options or {}
     kind = getattr(job.kind, "value", job.kind)
     meta = {"kind": kind, "created_at": job.created_at, "demo": bool(job.demo)}
+    if job.client:  # made with a client page's own login (app/clients.py)
+        meta["client"] = job.client
     if kind == "recreate":
         meta["mode"] = o.get("mode")
         if o.get("mode") == "panels":
@@ -35,7 +39,23 @@ def job_meta(job) -> dict:
     else:
         meta["style"] = o.get("render_style")
         meta["refine"] = job.parent is not None
+        meta["chat"] = job.session_id  # the Design chat it belongs to: the dashboards nest a chat's messages
     return meta
+
+
+# A Design message's words (the client's message, the AI designer's reply and the design's name), shown on this
+# machine's dashboards only: kept out of the usage ledger (compact) and of the reports sent to another (app/sync.py).
+TEXT_FIELDS = ("message", "reply", "title")
+TEXT_LIMITS = {"message": 600, "reply": 400, "title": 120}
+
+
+def design_texts(job) -> dict:
+    """The words of a Design job for the dashboards, shortened (History has them in full); {} for other jobs."""
+    if getattr(job.kind, "value", job.kind) != "design":
+        return {}
+    title = job.brief.title if job.brief is not None else None
+    texts = {"message": job.message, "reply": job.reply, "title": title}
+    return {key: (value or "")[:TEXT_LIMITS[key]] or None for key, value in texts.items()}
 
 
 def tokens(usage: dict | None) -> dict:
@@ -83,8 +103,7 @@ def ledger_line(record: dict, job) -> dict:
 def append(path: Path, entry: dict) -> None:
     """Append one line to the ledger. Never raises: the ledger must not break a job."""
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        append_line(path, json.dumps(entry, ensure_ascii=False, default=str))
     except OSError:
         log.exception("could not write the usage ledger %s", path)
 
@@ -134,6 +153,7 @@ def _job_entry(job, calls: list[dict]) -> dict:
     return {
         "id": job.id,
         **meta,
+        **design_texts(job),
         "status": getattr(job.status, "value", job.status),
         "model": job.model,
         "provider": job.provider,
@@ -167,13 +187,28 @@ def parse_floor(value: str) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def token_charges(entries: Iterable[dict]) -> dict[str, dict]:
+    """Our tokens charged per job (app/tokens.py ledger): {job_id: {"tokens": total, "items": [{item, tokens}]}}."""
+    out: dict[str, dict] = {}
+    for entry in entries:
+        if entry.get("type") != "charge" or not entry.get("job_id"):
+            continue
+        item = out.setdefault(entry["job_id"], {"tokens": 0, "items": []})
+        item["tokens"] += -entry["tokens"]
+        item["items"].append({"item": entry.get("item"), "tokens": -entry["tokens"], "variant": entry.get("variant")})
+    return out
+
+
 def build_report(
     store, ledger_path: Path, read_calls: Callable[[str], list[dict]], days: int = 30, now: datetime | None = None,
-    floor: str = "",
+    floor: str = "", tokens: Iterable[dict] | None = None, remote: Iterable[dict] = (), machine: str = "server",
 ) -> dict:
     """Every job created, or with a call, in the last `days` days (0 = all), newest first, with its calls; deleted
     jobs come from the ledger. The browser groups them by day (UTC or local) and adds them up. `floor` (UTC, from
-    parse_floor): nothing earlier is shown or counted, neither jobs nor calls."""
+    parse_floor): nothing earlier is shown or counted, neither jobs nor calls. `tokens`: the token ledger's entries
+    (each job gets the tokens charged for it); `remote`: the latest reports other machines sent (app/sync.py), whose
+    jobs are added with their machine's name; this machine's jobs are named `machine`."""
+    charges = token_charges(tokens or [])
     now = now or datetime.now(timezone.utc)
     since = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S") if days else ""
     since = max(since, floor)
@@ -225,10 +260,32 @@ def build_report(
             "cost_recorded": bool(calls), "cost_usd": round(sum(c for c in costs if c is not None), 6) if calls else None,
             "uncosted_calls": sum(c is None for c in costs), "calls": calls,
         })
+    for job in jobs:  # this machine's jobs: its name and our tokens
+        job["machine"] = machine
+        charged = charges.get(job["id"])
+        job["tokens"] = charged["tokens"] if charged else None
+        job["token_items"] = charged["items"] if charged else []
+    own = {j["id"] for j in jobs}
+    for report in remote:  # other machines' jobs, as their own Dashboard shows them
+        name = report.get("machine") or "?"
+        for job in report.get("jobs") or []:
+            # sync.clean_report checks every report it stores; this keeps the Dashboard up even with an older file
+            if (not isinstance(job, dict) or job.get("id") in own or not isinstance(job.get("id"), str)
+                    or not isinstance(job.get("created_at"), (str, type(None))) or not isinstance(job.get("calls", []), list)):
+                log.warning("sync: skipped a malformed job in %s's report", name)
+                continue
+            calls = after_floor([c for c in job.get("calls") or [] if isinstance(c, dict)
+                                 and isinstance(c.get("started_at"), (str, type(None)))
+                                 and isinstance(c.get("finished_at"), (str, type(None)))])
+            if recent(job.get("created_at"), calls):
+                jobs.append({**job, "calls": calls, "machine": name, "thumb": None})
     jobs.sort(key=lambda j: j["id"], reverse=True)  # job ids sort by creation time
     return {
         "generated_at": now.isoformat(timespec="seconds"), "days": days, "since": since or None,
         "floor": f"{floor}Z" if floor else None,  # the browser drops rows before this day too
+        "machine": machine,
+        "remote": [{"machine": r.get("machine"), "generated_at": r.get("generated_at"),
+                    "received_at": r.get("received_at"), "jobs": len(r.get("jobs") or [])} for r in remote],
         "jobs": jobs,
     }
 

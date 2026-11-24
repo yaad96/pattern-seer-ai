@@ -33,3 +33,9 @@ prompts-private/
 
 # Billing exports from the OpenAI / Anthropic dashboards (private)
 downloaded_csvs/
+
+# The client pages' material (/client_<name>): each client's name, logos and colours (app/clients.py reads it)
+/client_assets/
+# the Google Sheet log's link and secret, and the Apps Script holding the same secret (app/sheets.py)
+.google_sheet
+google_sheet_script.gs

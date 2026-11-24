@@ -11,10 +11,12 @@ const BN = new Map(Object.entries({
   'Recreate from image': 'ইমেজ থেকে রিক্রিয়েট',
   'Design from description': 'ডেসক্রিপশন থেকে ডিজাইন',
   'History': 'হিস্টোরি',
-  'Studio sections': 'স্টুডিও সেকশন',
+  'Page sections': 'পেজের সেকশন',
   'Skip to main content': 'মূল কনটেন্টে যান',
   'Loading Jersey HD Studio…': 'জার্সি এইচডি স্টুডিও লোড হচ্ছে…',
   'Jersey HD Studio could not start': 'জার্সি এইচডি স্টুডিও চালু করা যায়নি',
+  'This page could not start': 'পেজটি চালু করা যায়নি', // a client page (/client_<name>)
+  'This page needs JavaScript. Please enable it and reload the page.': 'এই পেজ চালাতে জাভাস্ক্রিপ্ট দরকার। এটি চালু করে পেজটি আবার লোড করুন।',
   'Jersey HD Studio needs JavaScript. Please enable it and reload the page.': 'জার্সি এইচডি স্টুডিও চালাতে জাভাস্ক্রিপ্ট দরকার। এটি চালু করে পেজটি আবার লোড করুন।',
   'Log out': 'লগ আউট',
   'Try again': 'আবার চেষ্টা করুন',
@@ -46,14 +48,14 @@ const BN = new Map(Object.entries({
   'Close the site': 'সাইট বন্ধ করুন',
   'Closing…': 'বন্ধ হচ্ছে…',
   'Opening…': 'চালু হচ্ছে…',
-  'Only your studio login can use the site. Everyone else, the demo link included, gets a “page not found” (404) error, as if the site weren’t there.': 'শুধু আপনার স্টুডিও লগইন সাইট ব্যবহার করতে পারছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে, যেন সাইটটি নেই।',
+  'Only your head admin login can use the site. Everyone else, the demo link included, gets a “page not found” (404) error, as if the site weren’t there.': 'শুধু আপনার হেড অ্যাডমিন লগইন সাইট ব্যবহার করতে পারছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে, যেন সাইটটি নেই।',
   'Everyone can use the site, the demo link included. Closing it shows them a “page not found” (404) error until you open it again here.': 'ডেমো লিংকসহ সবাই সাইট ব্যবহার করতে পারছে। বন্ধ করলে তারা “পেজ পাওয়া যায়নি” (404) এরর দেখবে, যতক্ষণ না আপনি এখানে আবার চালু করেন।',
   'This switch controls this server only.': 'এই সুইচ শুধু এই সার্ভারের জন্য।',
   'Close the site?': 'সাইট বন্ধ করবেন?',
-  'The demo link and everyone not signed in as studio will get a “page not found” (404) error until you open the site again here. Images being made right now still finish.': 'আপনি এখানে আবার চালু না করা পর্যন্ত ডেমো লিংক আর স্টুডিও লগইন ছাড়া সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখবে। এখন যে ছবিগুলো তৈরি হচ্ছে সেগুলো শেষ হবে।',
+  'The demo link and everyone not signed in as the head admin will get a “page not found” (404) error until you open the site again here. Images being made right now still finish.': 'আপনি এখানে আবার চালু না করা পর্যন্ত ডেমো লিংক আর হেড অ্যাডমিন লগইন ছাড়া সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখবে। এখন যে ছবিগুলো তৈরি হচ্ছে সেগুলো শেষ হবে।',
   'The site is closed.': 'সাইট এখন বন্ধ।',
   'The site is open again.': 'সাইট আবার চালু হয়েছে।',
-  'Only your studio login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.': 'শুধু আপনার স্টুডিও লগইন কাজ করছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে। আবার চালু করতে ড্যাশবোর্ডে যান।',
+  'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.': 'শুধু আপনার হেড অ্যাডমিন লগইন কাজ করছে। ডেমো লিংকসহ অন্য সবাই “পেজ পাওয়া যায়নি” (404) এরর দেখছে। আবার চালু করতে ড্যাশবোর্ডে যান।',
   // The Dashboard tab (dashboard.js, 2026-11-08).
   'Dashboard': 'ড্যাশবোর্ড',
   'Period': 'সময়কাল',
@@ -64,7 +66,10 @@ const BN = new Map(Object.entries({
   'UTC (like the OpenAI bill)': 'UTC অনুযায়ী (OpenAI-এর বিলের মতো)',
   'This computer’s time': 'এই কম্পিউটারের সময় অনুযায়ী',
   'Login': 'লগইন',
-  'Studio login': 'স্টুডিও লগইন',
+  'Head admin login': 'হেড অ্যাডমিন লগইন',
+  'Client logins': 'ক্লায়েন্ট লগইন',
+  'This login can only use its own page.': 'এই লগইন দিয়ে শুধু নিজের পেজটি ব্যবহার করা যায়।',
+  'This login can only make production panels.': 'এই লগইন দিয়ে শুধু প্রোডাকশন প্যানেল বানানো যায়।',
   'Demo login': 'ডেমো লগইন',
   'Download CSV': 'CSV ডাউনলোড',
   'No jobs in this period': 'এই সময়ে কোনো কাজ নেই',
@@ -94,11 +99,52 @@ const BN = new Map(Object.entries({
   'Took': 'সময় লেগেছে',
   'Pictures': 'ছবি',
   'There are no paid calls in this period.': 'এই সময়ে কোনো পেইড এপিআই কল নেই।',
+  // Our tokens on a client page (2026-11-23, tokens.js). The two dashboards that show tokens are English (the owner's
+  // choice: internal pages), so they have no entries here.
+  'Not charged on the head admin login': 'হেড অ্যাডমিন লগইনে চার্জ হয় না',
+  'This request is still being handled. Please wait a moment.': 'অনুরোধটি এখনো প্রসেস হচ্ছে। একটু অপেক্ষা করুন।',
+  'Not enough tokens for a new job. Please ask the head admin to add more.': 'নতুন কাজের জন্য যথেষ্ট টোকেন নেই। আরও টোকেনের জন্য হেড অ্যাডমিনের সাথে যোগাযোগ করুন।',
+  'Your tokens. Each panel and each design message uses tokens; a panel that fails is free.': 'আপনার টোকেন। প্রতিটি প্যানেল আর প্রতিটি ডিজাইন মেসেজে টোকেন লাগে; কোনো প্যানেল ব্যর্থ হলে টোকেন কাটা হয় না।',
+  'This client’s tokens. Jobs made with the head admin login are not charged.': 'এই ক্লায়েন্টের টোকেন। হেড অ্যাডমিন লগইনে বানানো কাজে টোকেন কাটা হয় না।',
+  // The client page's "Customer dashboard" tab (customerboard.js, tokenviews.js), the owner's name for it.
+  'Customer dashboard': 'কাস্টমার ড্যাশবোর্ড',
+  'Buy tokens': 'টোকেন কিনুন',
+  'Buying tokens here is coming soon. For now, please contact the head admin.': 'এখান থেকে টোকেন কেনার সুবিধা শীঘ্রই আসছে। আপাতত হেড অ্যাডমিনের সাথে যোগাযোগ করুন।',
+  'Tokens are not in use.': 'টোকেন এখন চালু নেই।',
+  'Seen with the head admin login: these are this client’s tokens.': 'হেড অ্যাডমিন লগইনে দেখছেন: এগুলো এই ক্লায়েন্টের টোকেন।',
+  'Tokens left': 'বাকি টোকেন',
+  'For new jobs': 'নতুন কাজের জন্য',
+  'Tokens used': 'ব্যবহৃত টোকেন',
+  'Tokens added': 'যোগ হওয়া টোকেন',
+  'In all': 'সব মিলিয়ে',
+  'Paid': 'পেমেন্ট',
+  'Token prices': 'টোকেনের দাম',
+  'A panel that fails is free; making it again is charged only when it works.': 'কোনো প্যানেল ব্যর্থ হলে টোকেন কাটা হয় না; আবার বানালে, সফল হলে তখনই টোকেন কাটা হয়।',
+  'Token use': 'টোকেন ব্যবহারের হিসাব',
+  'No jobs yet': 'এখনো কোনো কাজ নেই',
+  'Your jobs appear here with the tokens each one used.': 'আপনার কাজগুলো, প্রতিটিতে কত টোকেন লেগেছে সহ, এখানে দেখা যাবে।',
+  'Payments and tokens added': 'পেমেন্ট ও টোকেন যোগের হিসাব',
+  'No tokens added yet.': 'এখনো কোনো টোকেন যোগ হয়নি।',
+  'Balance after': 'এরপর বাকি',
+  'Correction': 'সংশোধন',
+  'Picture': 'ছবি',
+  'What was made': 'কী বানানো হয়েছে',
+  'View the picture larger': 'ছবিটি বড় করে দেখুন',
+  'Back (own picture)': 'ব্যাক (নিজস্ব ছবি থেকে)',
+  'Back (same as front)': 'ব্যাক (ফ্রন্টের মতোই)',
+  'Design message': 'ডিজাইন মেসেজ',
+  'free': 'ফ্রি',
+  'failed, not charged': 'ব্যর্থ, চার্জ হয়নি',
+  'Charged when it finishes': 'শেষ হলে চার্জ হবে',
+  'More when the running one finishes': 'চলমান কাজটি শেষ হলে আরও কাটা হবে',
+  'Change request': 'মডিফিকেশন',
+  'Message': 'মেসেজ',
+  'Designer:': 'ডিজাইনার:',
   // The studio page's link to /panels and the way back (2026-11-07; the button text is the owner's wording).
   'Generate production-ready panels': 'প্রোডাকশন-রেডি প্যানেল জেনারেট করুন',
   'Front, back and sleeve, on their own page: choose the panels, then add a picture for each.': 'ফ্রন্ট, ব্যাক ও স্লিভ, আলাদা পেজে: আগে প্যানেল বাছাই করুন, তারপর প্রতিটির ছবি দিন।',
   'Main page': 'মূল পেজ',
-  'Back to the studio page': 'মূল পেজে ফিরে যান',
+  'Back to the main page': 'মূল পেজে ফিরে যান',
   // The customer page's picture per panel (recreate.js, the owner's wording 2026-11-04).
   'Upload a picture (default)': 'ছবি আপলোড করুন (ডিফল্ট)',
   'Front and back the same': 'ফ্রন্ট আর ব্যাক একই',
@@ -464,7 +510,7 @@ const BN = new Map(Object.entries({
   'Your session has ended. Please sign in again.': 'আপনার সেশন শেষ হয়েছে। আবার সাইন ইন করুন।',
   'The upload is too large.': 'আপলোডটি অনেক বড়।',
   'Too many requests. Please wait a little and try again.': 'অনেক বেশি অনুরোধ। একটু অপেক্ষা করে আবার চেষ্টা করুন।',
-  'Cannot reach the studio server. Check that it is running and that you are on the factory network.': 'স্টুডিও সার্ভারে পৌঁছানো যাচ্ছে না। সার্ভার চালু আছে কিনা এবং আপনি কারখানার নেটওয়ার্কে আছেন কিনা দেখুন।',
+  'Cannot reach the server. Check that it is running and that you are on the factory network.': 'সার্ভারে পৌঁছানো যাচ্ছে না। সার্ভার চালু আছে কিনা এবং আপনি কারখানার নেটওয়ার্কে আছেন কিনা দেখুন।',
   'Unexpected response from the server.': 'সার্ভার থেকে অপ্রত্যাশিত উত্তর এসেছে।',
 
   // --- server stages, warnings and errors ---
@@ -709,6 +755,19 @@ const PATTERNS = [
   [/^(\d+) jobs?$/, '$1টি কাজ'],
   [/^(\d+) failed$/, '$1টি ব্যর্থ'],
   [/^(\d+) by the demo login$/, 'ডেমো লগইনে $1টি'],
+  [/^(\d+) by (?:a client login|client logins)$/, 'ক্লায়েন্ট লগইনে $1টি'],
+  [/^Client: (.+)$/, 'ক্লায়েন্ট: $1'],  // the Dashboard's badge on a job made with a client page's own login
+  // our tokens on a client page (2026-11-23): tokens.js's hints and the server's 402
+  [/^Not enough tokens: this needs ([\d\u09E6-\u09EF,]+), you have ([\d\u09E6-\u09EF,]+)\. Please ask the (?:studio|head admin) to add more\.$/, 'যথেষ্ট টোকেন নেই: এই কাজে লাগবে $1, আপনার আছে $2। আরও টোকেনের জন্য হেড অ্যাডমিনের সাথে যোগাযোগ করুন।'],
+  [/^This needs ([\d\u09E6-\u09EF,]+) tokens?$/, 'এই কাজে লাগবে $1 টোকেন'],
+  [/^Client price: ([\d\u09E6-\u09EF,]+) tokens?$/, 'ক্লায়েন্টের জন্য দাম: $1 টোকেন'],
+  [/^Each message: ([\d\u09E6-\u09EF,]+) tokens?$/, 'প্রতি মেসেজে $1 টোকেন'],
+  [/^You have ([\d\u09E6-\u09EF,]+)$/, 'আপনার আছে $1'],
+  // the Customer dashboard's job table (tokenviews.js): counts and the chat's time span
+  [/^([\d\u09E6-\u09EF,]+) design messages?$/, '$1টি ডিজাইন মেসেজ'],
+  [/^([\d\u09E6-\u09EF,]+) failed, not charged$/, '$1টি ব্যর্থ, চার্জ হয়নি'],
+  [/^Messages \(([\d\u09E6-\u09EF,]+)\)$/, 'মেসেজ ($1)'],
+  [/^to (.+ (?:AM|PM))$/, '$1 পর্যন্ত'],
   [/^(\d+) AI images?$/, '$1টি এআই ছবি'],
   [/^Calls \((\d+)\)$/, 'কল ($1)'],
   [/^Shows jobs from (.+) on\.$/, '$1 থেকে শুরু করে দেখানো হচ্ছে। এর আগের কিছু গোনা হয়নি।'],
@@ -809,8 +868,9 @@ function translateTree(node) {
     return;
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return;
+  if (node.closest('[data-no-translate]')) return; // excluded content keeps its text and its attributes
   translateAttrs(node);
-  if (NO_TEXT.has(node.tagName) || node.hasAttribute('data-no-translate')) return;
+  if (NO_TEXT.has(node.tagName)) return;
   for (const child of Array.from(node.childNodes)) translateTree(child);
 }
 
@@ -823,7 +883,9 @@ new MutationObserver((mutations) => {
     else if (m.type === 'characterData') translateTree(m.target);
     // As in translateTree, an element's own attributes are translated even on a textarea (its
     // placeholder); only elements inside excluded content are left alone.
-    else if (m.type === 'attributes' && !skipped(m.target.parentElement)) translateAttrs(m.target);
+    else if (m.type === 'attributes' && !skipped(m.target.parentElement) && !m.target.closest('[data-no-translate]')) {
+      translateAttrs(m.target);
+    }
   }
 }).observe(document.documentElement, {
   childList: true,

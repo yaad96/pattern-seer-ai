@@ -354,6 +354,13 @@ class Job(BaseModel):
     id: str
     kind: JobKind
     demo: bool = False  # made with the demo login (/customerep); that login can only see these jobs
+    client: str | None = None  # made with a client page's own login (its slug; app/clients.py): it sees only these
+    # the images (variant indices) its client pays our tokens for when they come out (app/tokens.py): those the client's
+    # own login asked for while tokens were on. Not a retry by the studio, nor anything made with tokens off.
+    charge_variants: list[int] = Field(default_factory=list)
+    # the press of Generate / Send that made it (main.py press_*), so a repeat of that press after a server restart
+    # still finds its job instead of making a second, charged one
+    request_id: str | None = None
     status: JobStatus = JobStatus.QUEUED
     stage: str = "queued"  # human-readable progress, e.g. "Writing design brief"
     created_at: str  # ISO-8601 UTC

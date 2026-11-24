@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import tempfile
 import time
 import zipfile
@@ -27,7 +28,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 from pydantic import ValidationError
 
-from app import pricing, usage
+from app import pricing, sync, usage
 from app.config import Settings
 from app.imaging import io as imgio
 from app.imaging.eps import combine_eps, eps_size, is_current_eps, physical_size_pt, raster_eps, vector_to_eps
@@ -70,7 +71,8 @@ from app.schemas import (
     VectorizeRequest,
     Visibility,
 )
-from app.storage import JobStore, new_job_id, new_session_id, utcnow_iso
+from app.storage import JobStore, is_valid_filename, new_job_id, new_session_id, utcnow_iso
+from app.tokens import item_of
 
 log = logging.getLogger("jersey.pipeline")
 
@@ -150,6 +152,21 @@ FRONT_FAILED_SLEEVE_AND_BACK = (
 BACK_FAILED_SLEEVE = "The back panel failed, so the sleeve was drawn from the reference only."
 # prepare_downloads: the vector preset made ahead of time (the EPS ZIP menu's default)
 PREPARED_PRESET = "detailed"
+# the clean-up of ready-made downloads (settings cleanup_days and cleanup_min_free_gb; JobManager.clean_downloads)
+CLEANUP_EVERY_S = 600
+CLEANUP_IN_USE_S = 1800  # a job opened in the last 30 minutes is left for later: a page may be downloading its files
+EXPORT_SUFFIXES = (".eps", ".svg", ".pdf")
+
+
+@dataclass(frozen=True)
+class _Download:
+    """One ready-made download on disk (JobManager._find_downloads): an image's print PNG (key None) or one export."""
+    made: float  # its newest file's mtime; 0 for an export record whose files are all gone
+    size: int
+    job_id: str
+    index: int
+    key: str | None
+    names: tuple[str, ...]
 
 
 def uses_back_picture(opts: RecreateOptions) -> bool:
@@ -209,6 +226,16 @@ def panel_ratio(panel: str) -> str:
 def file_stem(variant: VariantInfo) -> str:
     """File name stem: the panel name for panel jobs ("front.png"), else "v<index>"."""
     return variant.panel or f"v{variant.index}"
+
+
+async def _all_then_raise(work) -> None:
+    """Await every coroutine or task in `work` to its end, then raise the first error among them, if any. A plain
+    gather() raises at the first error while the others keep running: a panel still being drawn then came out after
+    its job had ended and been settled (uncharged, open to a second paid image: 2026-11-23 review A3-1)."""
+    results = await asyncio.gather(*work, return_exceptions=True)
+    error = next((r for r in results if isinstance(r, BaseException)), None)
+    if error is not None:
+        raise error
 
 
 async def _stop(*tasks: asyncio.Task | None) -> None:
@@ -278,8 +305,15 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         self._prep_tasks: set[asyncio.Task] = set()  # prepare_downloads; not in _running, so retries are not blocked
         self._vector_locks: dict[tuple[str, int, str], asyncio.Lock] = {}
+        self._opened: dict[str, float] = {}  # job id -> when get() last gave it out (monotonic), for the clean-up
+        self._low_disk_warned = -math.inf  # when the clean-up last warned that it has nothing left to delete
         # every paid call in one append-only file, which outlives a deleted job (the admin dashboard; app/usage.py)
         self.usage_ledger = store.root.parent / usage.LEDGER
+        self.tokens = None  # the client purses (app/tokens.py TokenBook), set by create_app; charged as jobs end
+        # the Google Sheet log (app/sheets.py; main.py sets it): one row per finished job, what it is called there
+        self.sheet = None
+        self._sheet_events: dict[str, str] = {}  # job id -> this end's event ("Made again: …", "Stopped by a restart")
+        self.client_name = lambda slug: slug  # main.py: the client's name from client_assets
 
     # ------------------------------------------------------------------
     # admin dashboard (app/usage.py)
@@ -295,10 +329,15 @@ class JobManager:
         if written:
             log.info("usage ledger created from %d logged API call(s)", written)
 
-    def usage_report(self, days: int = 30) -> dict:
-        """Jobs and their paid API calls for the dashboard (run in a worker thread: it reads every job's files)."""
+    def usage_report(self, days: int = 30, with_remote: bool = True) -> dict:
+        """Jobs and their paid API calls for the dashboard (run in a worker thread: it reads every job's files), with
+        our tokens charged per job and, unless `with_remote` is off, the other machines' latest reports."""
         floor = usage.parse_floor(self.settings.dashboard_since)
-        return usage.build_report(self.store, self.usage_ledger, self.call_log, days, floor=floor)
+        return usage.build_report(
+            self.store, self.usage_ledger, self.call_log, days, floor=floor,
+            tokens=self.tokens.entries() if self.tokens is not None else None,
+            remote=sync.load_remote(self.store.root.parent) if with_remote else [],
+            machine=self.settings.machine_name)
 
     # ------------------------------------------------------------------
     # job cache / persistence
@@ -314,12 +353,25 @@ class JobManager:
                 break
             self._cache.pop(oldest)
 
+    def _discard_unsaved(self, job: Job) -> None:
+        """A new job that failed before its record was saved (e.g. a picture that couldn't be prepared): its folder,
+        with the pictures written so far, goes too; History would never show it (2026-11-23 review A1-JPEG-500)."""
+        if (self.store.root / job.id / "job.json").exists():
+            return  # saved: a real job now, whatever failed after that
+        self._cache.pop(job.id, None)
+        try:
+            self.store.delete(job.id)
+        except OSError:
+            log.exception("could not remove the folder of job %s, which never started", job.id)
+
     def get(self, job_id: str) -> Job | None:
         job = self._cache.get(job_id)
         if job is None:
             job = self.store.load(job_id)
             if job is not None:
                 self._remember(job)
+        if job is not None:  # a page or a download is using it: the clean-up leaves its files alone for a while
+            self._opened[job_id] = time.monotonic()
         return job
 
     def _save(self, job: Job, stage: str | None = None) -> None:
@@ -357,20 +409,25 @@ class JobManager:
             usage.append(self.usage_ledger, usage.deleted_line(job))
         return deleted
 
-    def recover_interrupted(self, scan: int = 500) -> int:
+    def recover_interrupted(self) -> int:
         """Mark jobs left queued/running by a previous process as failed (partial when some images were done). The API
-        calls that were under way (calls_in_flight) are logged as interrupted: they may have been sent and billed."""
+        calls that were under way (calls_in_flight) are logged as interrupted: they may have been sent and billed.
+
+        Every job is looked at, not only the newest: "generate again" puts an old job back to running (2026-11-23
+        review CHAOS-2). A job stays running on disk until its charges are written: the call log saves the job, and a
+        job saved as ended before its charges would never be charged after a second crash (CHAOS-3)."""
         fixed = 0
-        for job_id in self.store.list_ids()[:scan]:
+        for job_id in self.store.list_ids():
+            if not self.store.may_be_running(job_id):  # a quick look; only those records are parsed
+                continue
             job = self.store.load(job_id)
             if job and job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
                 self._recount_calls(job)  # job.json may lag the log when the server was killed
-                job.status = JobStatus.PARTIAL if any(v.status == "succeeded" for v in job.variants) else JobStatus.FAILED
-                job.error = "Interrupted because the server restarted. Please run it again."
-                for v in job.variants:
-                    if v.status == "pending":
-                        v.status, v.error = "failed", job.error
+                error = "Interrupted because the server restarted. Please run it again."
+                logged = {c.get("key") for c in self.call_log(job.id) if c.get("key")}
                 for call in list(job.calls_in_flight):
+                    if call.get("key") in logged:  # already in the log: the kill came between its line and the save
+                        continue
                     variant = next((v for v in job.variants if v.index == call.get("variant")), None)
                     self._log_call(job, {
                         "purpose": call.get("purpose") or "image", "trigger": call.get("trigger") or "job",
@@ -379,11 +436,24 @@ class JobManager:
                         "model": call.get("model") or job.model, "endpoint": None, "started_at": call.get("started_at"),
                         "finished_at": utcnow_iso(), "latency_s": None, "status": "error",
                         "error": {"kind": "interrupted", "message": INTERRUPTED_CALL},
-                    }, variant, key=call.get("key"))
+                    }, variant, key=call.get("key"))  # each one saved leaves calls_in_flight: never logged twice
                 job.calls_in_flight = []
+                job.status = JobStatus.PARTIAL if any(v.status == "succeeded" for v in job.variants) else JobStatus.FAILED
+                job.error = error
+                for v in job.variants:
+                    if v.status == "pending":
+                        v.status, v.error = "failed", error
+                self._sheet_events[job.id] = "Stopped by a restart"
+                self._settle_tokens(job)  # the images that came out before the restart are charged (before the save)
                 self._save(job, "Interrupted")
                 fixed += 1
         return fixed
+
+    def _chargeable(self, job: Job) -> list[int]:
+        """The images a new job's client pays tokens for: all of them, for a client login's job while tokens are on."""
+        if job.client is None or self.tokens is None or not self.tokens.enabled:
+            return []
+        return [v.index for v in job.variants]
 
     def _spawn(self, job: Job, coro) -> None:
         self._running.add(job.id)
@@ -517,7 +587,7 @@ class JobManager:
 
     async def submit_recreate(
         self, opts: RecreateOptions, image: Image.Image, back_image: Image.Image | None = None, *, demo: bool = False,
-        sleeve_image: Image.Image | None = None,
+        sleeve_image: Image.Image | None = None, client: str | None = None, request_id: str | None = None,
     ) -> Job:
         """`image` is the reference (the front, for panels; for panels without the front, the picture of the panels
         asked for); `back_image` is the client's separate back picture (only used when uses_back_picture)."""
@@ -543,61 +613,68 @@ class JobManager:
             JobKind.RECREATE, opts.model_dump(mode="json"), resolved, len(chosen) if panels else opts.variants
         )
         job.demo = demo
-        model_input = await asyncio.to_thread(
-            imgio.prepare_model_input, image, max_long_edge=self.settings.model_input_long_edge
-        )
-        original = await asyncio.to_thread(imgio.to_png_bytes, image)
-        self.store.write_file(job.id, "input_1.png", original)
-        job.inputs = ["input_1.png"]
-        reference = InputImage(data=model_input, mime_type=imgio.image_mime(model_input), label="reference", source="input_1.png")
-        if opts.front_crop:  # keep the upload the crop was taken from (not a job input: input_1.png is what was used)
-            self.store.write_file(job.id, "input_full.png", await asyncio.to_thread(imgio.to_png_bytes, full))
-        if panels:
-            whole_reference = reference
-            if opts.front_crop and opts.panels != ["sleeve"]:  # a sleeve asked for alone is drawn from its own box
-                whole_input = await asyncio.to_thread(
-                    imgio.prepare_model_input, full, max_long_edge=self.settings.model_input_long_edge
-                )
-                whole_reference = InputImage(data=whole_input, mime_type=imgio.image_mime(whole_input), label="reference", source="input_full.png")
-            back_reference = None
-            if back_from_picture:
-                if opts.back_crop:  # the back box; keep the full back upload as well (not a job input)
-                    self.store.write_file(job.id, "input_full_2.png", await asyncio.to_thread(imgio.to_png_bytes, back_image))
-                    back_image = imgio.crop_fraction(back_image, opts.back_crop)
-                self.store.write_file(job.id, "input_2.png", await asyncio.to_thread(imgio.to_png_bytes, back_image))
-                job.inputs.append("input_2.png")
-                back_input = await asyncio.to_thread(
-                    imgio.prepare_model_input, back_image, max_long_edge=self.settings.model_input_long_edge
-                )
-                back_reference = InputImage(data=back_input, mime_type=imgio.image_mime(back_input), label="back_reference", source="input_2.png")
-            sleeve_reference = None  # the client's own sleeve picture (its box), for a sleeve made with other panels
-            if sleeve_image is not None and "sleeve" in opts.panels and len(opts.panels) > 1:
-                if opts.sleeve_crop:
-                    self.store.write_file(job.id, "input_full_3.png", await asyncio.to_thread(imgio.to_png_bytes, sleeve_image))
-                    sleeve_image = imgio.crop_fraction(sleeve_image, opts.sleeve_crop)
-                self.store.write_file(job.id, "input_3.png", await asyncio.to_thread(imgio.to_png_bytes, sleeve_image))
-                job.inputs.append("input_3.png")
-                sleeve_input = await asyncio.to_thread(
-                    imgio.prepare_model_input, sleeve_image, max_long_edge=self.settings.model_input_long_edge
-                )
-                sleeve_reference = InputImage(data=sleeve_input, mime_type=imgio.image_mime(sleeve_input), label="sleeve_reference", source="input_3.png")
-            for variant, (panel, label) in zip(job.variants, chosen):
-                variant.panel, variant.label = panel, label
-                variant.aspect_ratio = panel_ratio(panel)  # exact: 25:34 bodies, 12:7 sleeve
-            first = job.variants[0]  # the front, or the first panel asked for; its prompt represents the job
-            job.aspect_ratio = first.aspect_ratio
-            first_prompt = self._panel_prompt(opts, first, has_front_reference=False, back_picture=first.panel == "back")
-            job.prompt = PromptRecord(system=first_prompt.system, user=first_prompt.user)
+        job.client = client
+        job.request_id = request_id
+        job.charge_variants = self._chargeable(job)
+        try:
+            model_input = await asyncio.to_thread(
+                imgio.prepare_model_input, image, max_long_edge=self.settings.model_input_long_edge
+            )
+            original = await asyncio.to_thread(imgio.to_png_bytes, image)
+            self.store.write_file(job.id, "input_1.png", original)
+            job.inputs = ["input_1.png"]
+            reference = InputImage(data=model_input, mime_type=imgio.image_mime(model_input), label="reference", source="input_1.png")
+            if opts.front_crop:  # keep the upload the crop was taken from (not a job input: input_1.png is what was used)
+                self.store.write_file(job.id, "input_full.png", await asyncio.to_thread(imgio.to_png_bytes, full))
+            if panels:
+                whole_reference = reference
+                if opts.front_crop and opts.panels != ["sleeve"]:  # a sleeve asked for alone is drawn from its own box
+                    whole_input = await asyncio.to_thread(
+                        imgio.prepare_model_input, full, max_long_edge=self.settings.model_input_long_edge
+                    )
+                    whole_reference = InputImage(data=whole_input, mime_type=imgio.image_mime(whole_input), label="reference", source="input_full.png")
+                back_reference = None
+                if back_from_picture:
+                    if opts.back_crop:  # the back box; keep the full back upload as well (not a job input)
+                        self.store.write_file(job.id, "input_full_2.png", await asyncio.to_thread(imgio.to_png_bytes, back_image))
+                        back_image = imgio.crop_fraction(back_image, opts.back_crop)
+                    self.store.write_file(job.id, "input_2.png", await asyncio.to_thread(imgio.to_png_bytes, back_image))
+                    job.inputs.append("input_2.png")
+                    back_input = await asyncio.to_thread(
+                        imgio.prepare_model_input, back_image, max_long_edge=self.settings.model_input_long_edge
+                    )
+                    back_reference = InputImage(data=back_input, mime_type=imgio.image_mime(back_input), label="back_reference", source="input_2.png")
+                sleeve_reference = None  # the client's own sleeve picture (its box), for a sleeve made with other panels
+                if sleeve_image is not None and "sleeve" in opts.panels and len(opts.panels) > 1:
+                    if opts.sleeve_crop:
+                        self.store.write_file(job.id, "input_full_3.png", await asyncio.to_thread(imgio.to_png_bytes, sleeve_image))
+                        sleeve_image = imgio.crop_fraction(sleeve_image, opts.sleeve_crop)
+                    self.store.write_file(job.id, "input_3.png", await asyncio.to_thread(imgio.to_png_bytes, sleeve_image))
+                    job.inputs.append("input_3.png")
+                    sleeve_input = await asyncio.to_thread(
+                        imgio.prepare_model_input, sleeve_image, max_long_edge=self.settings.model_input_long_edge
+                    )
+                    sleeve_reference = InputImage(data=sleeve_input, mime_type=imgio.image_mime(sleeve_input), label="sleeve_reference", source="input_3.png")
+                for variant, (panel, label) in zip(job.variants, chosen):
+                    variant.panel, variant.label = panel, label
+                    variant.aspect_ratio = panel_ratio(panel)  # exact: 25:34 bodies, 12:7 sleeve
+                first = job.variants[0]  # the front, or the first panel asked for; its prompt represents the job
+                job.aspect_ratio = first.aspect_ratio
+                first_prompt = self._panel_prompt(opts, first, has_front_reference=False, back_picture=first.panel == "back")
+                job.prompt = PromptRecord(system=first_prompt.system, user=first_prompt.user)
+                self._remember(job)
+                self._save(job, "Queued")
+                self._spawn(job, self._run_panels(job, opts, resolved, reference, whole_reference, back_reference, sleeve_reference))
+                return job
+            prompt = build_recreate_prompt(opts, aspect_ratio=resolved.aspect_ratio)
+            job.prompt = PromptRecord(system=prompt.system, user=prompt.user)
             self._remember(job)
             self._save(job, "Queued")
-            self._spawn(job, self._run_panels(job, opts, resolved, reference, whole_reference, back_reference, sleeve_reference))
+            self._spawn(job, self._run_generation(job, resolved, prompt, [reference], opts.seed, opts.print_long_edge))
             return job
-        prompt = build_recreate_prompt(opts, aspect_ratio=resolved.aspect_ratio)
-        job.prompt = PromptRecord(system=prompt.system, user=prompt.user)
-        self._remember(job)
-        self._save(job, "Queued")
-        self._spawn(job, self._run_generation(job, resolved, prompt, [reference], opts.seed, opts.print_long_edge))
-        return job
+        except BaseException:  # the job never started: its folder (the pictures written so far) goes too
+            self._discard_unsaved(job)
+            raise
 
     async def submit_design(
         self,
@@ -608,6 +685,8 @@ class JobManager:
         parent: ParentRef | None,
         attachments: list[Image.Image],
         demo: bool = False,
+        client: str | None = None,
+        request_id: str | None = None,
     ) -> Job:
         message = message.strip()
         if not message:
@@ -648,6 +727,9 @@ class JobManager:
         )
         job = self._new_job(JobKind.DESIGN, opts.model_dump(mode="json"), resolved, opts.variants)
         job.demo = demo
+        job.client = client
+        job.request_id = request_id
+        job.charge_variants = self._chargeable(job)
         if session_id:
             job.session_id = session_id
         elif parent_job is not None and parent_job.session_id:
@@ -657,28 +739,32 @@ class JobManager:
         job.parent = parent
         job.message = message
 
-        images: list[InputImage] = []
-        if parent_raw is not None:
-            parent_img = await asyncio.to_thread(imgio.decode_model_output, parent_raw)
-            data = await asyncio.to_thread(
-                imgio.prepare_model_input, parent_img, max_long_edge=self.settings.model_input_long_edge
-            )
-            images.append(InputImage(
-                data=data, mime_type=imgio.image_mime(data), label="current_design", source=f"{parent_job.id}/{pv.raw or pv.png}"
-            ))
-        for i, att in enumerate(attachments, start=1):
-            self.store.write_file(job.id, f"attach_{i}.png", await asyncio.to_thread(imgio.to_png_bytes, att))
-            job.inputs.append(f"attach_{i}.png")
-            data = await asyncio.to_thread(
-                imgio.prepare_model_input, att, max_long_edge=self.settings.model_input_long_edge
-            )
-            images.append(InputImage(data=data, mime_type=imgio.image_mime(data), label="inspiration", source=f"attach_{i}.png"))
+        try:
+            images: list[InputImage] = []
+            if parent_raw is not None:
+                parent_img = await asyncio.to_thread(imgio.decode_model_output, parent_raw)
+                data = await asyncio.to_thread(
+                    imgio.prepare_model_input, parent_img, max_long_edge=self.settings.model_input_long_edge
+                )
+                images.append(InputImage(
+                    data=data, mime_type=imgio.image_mime(data), label="current_design", source=f"{parent_job.id}/{pv.raw or pv.png}"
+                ))
+            for i, att in enumerate(attachments, start=1):
+                self.store.write_file(job.id, f"attach_{i}.png", await asyncio.to_thread(imgio.to_png_bytes, att))
+                job.inputs.append(f"attach_{i}.png")
+                data = await asyncio.to_thread(
+                    imgio.prepare_model_input, att, max_long_edge=self.settings.model_input_long_edge
+                )
+                images.append(InputImage(data=data, mime_type=imgio.image_mime(data), label="inspiration", source=f"attach_{i}.png"))
 
-        self._remember(job)
-        self._save(job, "Queued")
-        parent_brief = parent_job.brief if parent_job is not None else None
-        self._spawn(job, self._run_design(job, opts, resolved, images, parent_brief, refining=parent_job is not None))
-        return job
+            self._remember(job)
+            self._save(job, "Queued")
+            parent_brief = parent_job.brief if parent_job is not None else None
+            self._spawn(job, self._run_design(job, opts, resolved, images, parent_brief, refining=parent_job is not None))
+            return job
+        except BaseException:  # the job never started: its folder (the pictures written so far) goes too
+            self._discard_unsaved(job)
+            raise
 
     # ------------------------------------------------------------------
     # running
@@ -770,11 +856,8 @@ class JobManager:
             job.status = JobStatus.RUNNING
             n = len(job.variants)
             self._save(job, f"Generating {n} variant{'s' if n > 1 else ''} with {resolved.model.label}")
-            await asyncio.gather(
-                *(
-                    self._run_variant(job, v, resolved, prompt, images, seed, print_long_edge)
-                    for v in job.variants
-                )
+            await _all_then_raise(
+                self._run_variant(job, v, resolved, prompt, images, seed, print_long_edge) for v in job.variants
             )
             self._finish(job)
         except asyncio.CancelledError:
@@ -878,7 +961,7 @@ class JobManager:
                 self._save(job, f"Drawing the back panel with {model}")
             elif back is not None and back_task is None:
                 self._save(job, "Making the back from the front")
-            await asyncio.gather(*work)
+            await _all_then_raise(work)  # every panel ends before the job does (2026-11-23 review A3-1)
             if back_task is not None and back.status == "succeeded":
                 back.source = "reference"  # drawn from the client's own picture
             self._finish(job)
@@ -1030,16 +1113,52 @@ class JobManager:
             job.status = JobStatus.FAILED
             job.error = next((v.error for v in job.variants if v.error), "Generation failed.")
             stage = "Failed"
+        # charged before the final status is saved: a crash in between leaves the job running on disk, so the next
+        # start settles it again, and the ledger's record of what was charged keeps that from charging twice
+        self._settle_tokens(job)
         self._save(job, stage)
 
     def _fail(self, job: Job, message: str) -> None:
-        job.status = JobStatus.FAILED
+        # partial when some images came out (e.g. stopped by a restart): they exist and their client pays for them
+        job.status = JobStatus.PARTIAL if any(v.status == "succeeded" for v in job.variants) else JobStatus.FAILED
         job.error = message
         for v in job.variants:
             if v.status == "pending":
                 v.status = "failed"
                 v.error = message
+        self._settle_tokens(job)
         self._save(job, "Failed")
+
+    def _settle_tokens(self, job: Job) -> None:
+        """A job ended: a client's token hold goes and each image that came out is charged (app/tokens.py), then the
+        job's row goes to the Google Sheet log (app/sheets.py). A problem here is logged and never fails the job."""
+        charged: list[dict] = []
+        if self.tokens is not None:
+            try:
+                charged = self.tokens.settle(job)
+            except Exception:
+                log.exception("tokens: could not settle job %s", job.id)
+        self._sheet_job(job, charged)
+
+    def _sheet_job(self, job: Job, charged: list[dict]) -> None:
+        """The job's row in the sheet log: what it asked and made, its tokens (and the purse after), its real cost and
+        its texts."""
+        event = self._sheet_events.pop(job.id, None)
+        if self.sheet is None:
+            return
+        try:
+            from app import sheets  # here: sheets.py imports app.tokens, which needs nothing from this module
+
+            if event is None:
+                status = getattr(job.status, "value", job.status)
+                event = {"succeeded": "Job done", "partial": "Job done, some images failed"}.get(status, "Job failed")
+            balance = (self.tokens.balance(job.client) if job.client and self.tokens is not None and self.tokens.enabled
+                       else None)
+            row = sheets.job_row(job, event, charged=charged, balance_after=balance,
+                                 customer=self.client_name(job.client) if job.client else "", calls=self.call_log(job.id))
+            self.sheet.enqueue(row)
+        except Exception:
+            log.exception("sheet: could not make the row of job %s", job.id)
 
     async def _run_variant(
         self,
@@ -1271,6 +1390,8 @@ class JobManager:
                 variant.uncosted_calls += 1
         job.calls_in_flight = [c for c in job.calls_in_flight if c.get("key") != key]
         full = {"n": job.api_calls, "job_id": job.id, **record}
+        if key:  # its in-flight marker: start-up recovery never logs a call twice (a kill between the line and the save)
+            full["key"] = key
         line = json.dumps(full, ensure_ascii=False, default=str)
         try:
             self.store.append_line(job.id, CALL_LOG, line)
@@ -1365,9 +1486,11 @@ class JobManager:
     # one failed image, generated again
     # ------------------------------------------------------------------
 
-    async def retry_variant(self, job_id: str, index: int) -> Job:
+    async def retry_variant(self, job_id: str, index: int, charge: bool = False, by: str = "") -> Job:
         """Generate one failed image of a finished Recreate job again (e.g. after a network error), with the job's
-        own pictures, model and settings. A front made again also lets a back made from it follow (no image call)."""
+        own pictures, model and settings. A front made again also lets a back made from it follow (no image call).
+        `charge`: the job's client pays for the image when it comes out (its own login asked; a studio retry is free).
+        `by`: who asked, for the sheet log ("head admin", "client", "demo")."""
         job = self.get(job_id)
         if job is None:
             raise JobError("Job not found.", 404)
@@ -1396,12 +1519,55 @@ class JobManager:
             "white" if opts.mode in (RecreateMode.PATTERN, RecreateMode.PANELS) else opts.background,
             image_count=3 if variant.panel else 1,
         )
-        work = None if derived_back else await self._retry_inputs(job, variant, opts)  # checks the stored pictures
-        variant.status, variant.error = "pending", None
-        job.status, job.error = JobStatus.RUNNING, None
-        self._save(job, f"Generating the {variant.label.lower()} again" if variant.label else f"Generating variant {index} again")
+        # Claimed before the first await (reading the stored pictures takes a moment): a second "generate again" for
+        # this job, e.g. from the client's other device, now gets 409 instead of a second, paid, image of the panel.
+        self._running.add(job.id)
+        before = (variant.status, variant.error, variant.prompt, list(job.charge_variants), job.status, job.error)
+        try:
+            work = None if derived_back else await self._retry_inputs(job, variant, opts)  # checks the stored pictures
+            variant.status, variant.error = "pending", None
+            if job.client is not None:  # who pays for the images this makes when they come out (app/tokens.py)
+                chargeable = set(job.charge_variants)
+                for target in self.retry_targets(job, variant, opts):  # a front made again brings its back along
+                    if charge and self.tokens is not None and self.tokens.enabled:
+                        chargeable.add(target.index)
+                    else:  # the studio's retry is free, and so is the back it makes again
+                        chargeable.discard(target.index)
+                job.charge_variants = sorted(chargeable)
+            job.status, job.error = JobStatus.RUNNING, None
+            self._sheet_events[job.id] = f"Made again{f' ({by})' if by else ''}: {variant.label or f'image {index}'}"
+            self._save(job, f"Generating the {variant.label.lower()} again" if variant.label else f"Generating variant {index} again")
+        except BaseException:  # e.g. the save failed (a full disk): as it was, and free again (2026-11-23 review A3-6)
+            variant.status, variant.error, variant.prompt, job.charge_variants, job.status, job.error = before
+            self._sheet_events.pop(job.id, None)
+            self._running.discard(job.id)
+            raise
         self._spawn(job, self._retry(job, variant, opts, resolved, work))
         return job
+
+    def retry_targets(self, job: Job, variant: VariantInfo, opts: RecreateOptions | None = None) -> list[VariantInfo]:
+        """The images "generate again" on `variant` makes: the variant itself, and for the front a failed back that is
+        made from the front (_retry makes it again once the front is done)."""
+        targets = [variant]
+        if variant.panel != "front":
+            return targets
+        if opts is None:
+            try:
+                opts = RecreateOptions.model_validate(job.options)
+            except ValidationError:
+                return targets
+        back = next((v for v in job.variants if v.panel == "back"), None)
+        if back is not None and back.status == "failed" and derives_back(opts):
+            targets.append(back)
+        return targets
+
+    def retry_items(self, job: Job, index: int) -> list[str]:
+        """The priced items (app/tokens.py) of what "generate again" on image `index` makes: what the client's hold
+        covers (a front with its back made from it: 2026-11-23 review A1-DERIVED-BACK)."""
+        if not 1 <= index <= len(job.variants):
+            return []
+        targets = self.retry_targets(job, job.variants[index - 1])
+        return [item for item in (item_of(job, v) for v in targets) if item]
 
     async def _retry_inputs(
         self, job: Job, variant: VariantInfo, opts: RecreateOptions
@@ -1498,7 +1664,9 @@ class JobManager:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("job %s: generating variant %s again failed", job.id, variant.index)
-            variant.status, variant.error = "failed", f"Unexpected error: {exc}"
+            for v in job.variants:  # an image that came out (and was charged) stays: only unfinished ones failed
+                if v.status == "pending":  # (2026-11-23 review A3-2)
+                    v.status, v.error = "failed", f"Unexpected error: {exc}"
             self._finish(job)
 
     def _prepare_downloads(self, job: Job) -> None:
@@ -1574,6 +1742,30 @@ class JobManager:
         except FileNotFoundError:  # the job was deleted while its PNG was being made
             return False
         return True
+
+    async def ensure_export(self, job_id: str, filename: str) -> bool:
+        """An EPS, SVG or PDF export asked for by name that is not on disk, e.g. one the clean-up deleted after a page
+        had listed it: made again under that name, as its export button would. True when it now exists."""
+        if not is_valid_filename(filename):
+            return False
+        stem, _, rest = filename.rpartition("_")  # e.g. "left_sleeve" + "detailed.eps", "v1" + "standard-24.svg"
+        key, _, ext = rest.rpartition(".")
+        preset, _, colors = key.partition("-")
+        if f".{ext}" not in EXPORT_SUFFIXES or (preset == "raster" and (ext != "eps" or colors)):
+            return False
+        try:
+            req = VectorizeRequest(preset=preset, colors=int(colors) if colors else None)
+        except ValueError:  # not a preset or a colour count (pydantic's ValidationError is a ValueError too)
+            return False
+        job = self.get(job_id)
+        variant = next((v for v in job.variants if file_stem(v) == stem), None) if job else None
+        if variant is None or variant.status != "succeeded":
+            return False
+        try:
+            await self.vectorize(job_id, variant.index, req)
+        except JobError:
+            return False
+        return self.store.file_path(job_id, filename) is not None
 
     async def panel_eps_zip(self, job_id: str, preset: str) -> tuple[str, bytes]:
         """(download name, ZIP bytes): the EPS of every panel of a panel job at one preset (a vector preset, or
@@ -1723,3 +1915,155 @@ class JobManager:
             eps_bytes=len(files["eps"]),
             pdf_bytes=len(files["pdf"]),
         )
+
+    # ------------------------------------------------------------------
+    # clean-up of the ready-made downloads (cleanup_days, cleanup_min_free_gb)
+    # ------------------------------------------------------------------
+
+    async def run_cleanup(self) -> None:
+        """The clean-up's background task (main.py starts it when cleanup_days or cleanup_min_free_gb is set): a round
+        two minutes after start-up, then one every 10 minutes."""
+        await asyncio.sleep(120)
+        while True:
+            try:
+                await self.clean_downloads()
+            except Exception:  # noqa: BLE001 - tried again at the next round
+                log.exception("clean-up: the round failed")
+            await asyncio.sleep(CLEANUP_EVERY_S)
+
+    async def clean_downloads(self) -> dict:
+        """One round: delete the ready-made downloads (the print-size panel PNGs, the EPS/SVG/PDF exports) made more
+        than cleanup_days ago; then, while less than cleanup_min_free_gb is free, the oldest of the rest, whatever their
+        age. Each comes back on its next download (ensure_print_png, ensure_export), made from the job's AI image,
+        which is never deleted, like the client's pictures, the previews and every record. A job that is running, or
+        was opened in the last 30 minutes, is left for a later round. Returns what it deleted, for the log and checks."""
+        days, min_free = self.settings.cleanup_days, int(self.settings.cleanup_min_free_gb * 1e9)
+        cutoff = time.time() - days * 86400 if days > 0 else None
+        now = time.monotonic()
+        for job_id, at in list(self._opened.items()):
+            if now - at >= CLEANUP_IN_USE_S:
+                del self._opened[job_id]
+        low = min_free > 0 and self._disk_free() < min_free
+        found = await asyncio.to_thread(self._find_downloads, cutoff, low) if cutoff is not None or low else []
+        done = {"files": 0, "bytes": 0, "jobs": set()}
+        reasons = []
+
+        async def drop(d: _Download) -> None:
+            deleted = await self._drop_download(d)
+            if deleted and deleted[0]:
+                done["files"] += deleted[0]
+                done["bytes"] += deleted[1]
+                done["jobs"].add(d.job_id)
+
+        for d in found:
+            if cutoff is not None and d.made < cutoff:
+                await drop(d)
+        if done["files"]:
+            reasons.append(f"made more than {days} day(s) ago")
+        if min_free > 0 and self._disk_free() < min_free:
+            before = done["files"]
+            for d in found:  # oldest first
+                if self._disk_free() >= min_free:
+                    break
+                if cutoff is None or d.made >= cutoff:
+                    await drop(d)
+            if done["files"] > before:
+                reasons.append(f"less than {self.settings.cleanup_min_free_gb:g} GB was free")
+            if self._disk_free() < min_free and time.monotonic() - self._low_disk_warned >= 3600:
+                self._low_disk_warned = time.monotonic()
+                log.warning("clean-up: only %.1f GB is free on %s, and no ready-made download is left to delete: free "
+                            "some space", self._disk_free() / 1e9, self.store.root)
+        free = self._disk_free()
+        if done["files"]:
+            log.info("clean-up: %d ready-made download file(s) of %d job(s) deleted (%s), %.0f MB freed; %.1f GB free",
+                     done["files"], len(done["jobs"]), " and ".join(reasons), done["bytes"] / 1e6, free / 1e9)
+        return {"files": done["files"], "bytes": done["bytes"], "jobs": sorted(done["jobs"]), "free": free}
+
+    def _disk_free(self) -> float:
+        try:
+            return shutil.disk_usage(self.store.root).free
+        except OSError:  # cannot tell: nothing is deleted for want of space
+            return math.inf
+
+    def _in_use(self, job_id: str) -> bool:
+        return time.monotonic() - self._opened.get(job_id, -math.inf) < CLEANUP_IN_USE_S
+
+    @staticmethod
+    def _downloads(job: Job, files: dict) -> list[tuple[int, str | None, tuple[str, ...]]]:
+        """What of a job can be made again from its AI images, for each succeeded image whose <stem>_raw.png is in
+        `files`: (index, None, the print PNG) for today's panels (ensure_print_png), and (index, key, the files) for
+        each export recorded (vectorize). Nothing else is ever offered for deletion."""
+        out = []
+        for v in job.variants:
+            if v.status != "succeeded" or not v.raw or v.raw not in files:
+                continue
+            if v.png and v.png != v.raw and v.panel in PANEL_PRINT_IN and v.aspect_ratio == panel_ratio(v.panel):
+                out.append((v.index, None, (v.png,)))
+            for key, asset in v.vectors.items():
+                out.append((v.index, key, tuple(n for n in (asset.eps, asset.svg, asset.pdf)
+                                                if n and n.endswith(EXPORT_SUFFIXES))))
+        return out
+
+    def _find_downloads(self, cutoff: float | None, everything: bool) -> list[_Download]:
+        """(worker thread) The ready-made downloads on disk, oldest first: those of each job with one made before
+        `cutoff`, or of every job when `everything` (little free space). A job's record is read only then."""
+        found: list[_Download] = []
+        for job_id in self.store.list_ids():
+            try:
+                with os.scandir(self.store.root / job_id) as entries:
+                    files = {e.name: e.stat() for e in entries if e.is_file()}
+            except OSError:  # deleted meanwhile: gone
+                continue
+            made = [st.st_mtime for name, st in files.items() if name.endswith(EXPORT_SUFFIXES)
+                    or (name.endswith(".png") and name[:-4] in PANEL_PRINT_IN and f"{name[:-4]}_raw.png" in files)]
+            if not made or not (everything or (cutoff is not None and min(made) < cutoff)):
+                continue
+            job = self.store.load(job_id)
+            for index, key, names in self._downloads(job, files) if job else []:
+                present = [files[name] for name in names if name in files]
+                if present or key is not None:  # an export record whose files are gone is dropped too (made 0)
+                    found.append(_Download(max((st.st_mtime for st in present), default=0.0),
+                                           sum(st.st_size for st in present), job_id, index, key, names))
+        found.sort(key=lambda d: d.made)
+        return found
+
+    async def _drop_download(self, d: _Download) -> tuple[int, int] | None:
+        """Delete one download that _find_downloads found and, for an export, its record (pages then offer to make it
+        again), unless its job is in use or one of its files was made again since. Under the lock its maker takes, so
+        a download of it meanwhile waits, then makes it again. (files, bytes) deleted, or None when it was left."""
+        lock = self._vector_locks.setdefault((d.job_id, d.index, d.key or "print-png"), asyncio.Lock())
+        async with lock:
+            if d.job_id in self._running or self._in_use(d.job_id):
+                return None
+            deleted = await asyncio.to_thread(self._delete_files, d.job_id, d.names, d.made)
+            if deleted is None or d.key is None:
+                return deleted
+            job = self._cache.get(d.job_id) or self.store.load(d.job_id)  # not get(): this is no visit
+            variant = next((v for v in job.variants if v.index == d.index), None) if job else None
+            if variant is not None and variant.vectors.pop(d.key, None) is not None:
+                try:
+                    self.store.save(job)  # updated_at stays: nothing about the job itself changed
+                except OSError:  # e.g. a full disk: the old record stays on disk, and its links make the files again
+                    log.exception("clean-up: job %s: could not save its record after deleting %s", d.job_id, d.names)
+            return deleted
+
+    def _delete_files(self, job_id: str, names: tuple[str, ...], made: float) -> tuple[int, int] | None:
+        """(worker thread) Delete a download's files, unless one of them is newer than `made` (made again since)."""
+        paths = [p for p in (self.store.file_path(job_id, name) for name in names) if p is not None]
+        try:
+            stats = [p.stat() for p in paths]
+        except FileNotFoundError:  # going meanwhile (e.g. the job was deleted)
+            return None
+        if any(st.st_mtime > made for st in stats):
+            return None
+        count = size = 0
+        for path, st in zip(paths, stats):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                log.exception("clean-up: could not delete %s", path)
+                continue
+            count, size = count + 1, size + st.st_size
+        return count, size

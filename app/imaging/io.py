@@ -85,8 +85,13 @@ def prepare_model_input(img: Image.Image, *, max_long_edge: int) -> bytes:
     png = to_png_bytes(rgb)
     if len(png) <= MODEL_INPUT_MAX_PNG_BYTES:
         return png
+    jpeg = rgb.convert("RGB")
     buf = io.BytesIO()
-    rgb.convert("RGB").save(buf, "JPEG", quality=MODEL_INPUT_JPEG_QUALITY, subsampling=0, optimize=True)
+    try:
+        jpeg.save(buf, "JPEG", quality=MODEL_INPUT_JPEG_QUALITY, subsampling=0, optimize=True)
+    except OSError:  # optimize gives libjpeg a buffer of width × height bytes: too small for a grainy picture
+        buf = io.BytesIO()
+        jpeg.save(buf, "JPEG", quality=MODEL_INPUT_JPEG_QUALITY, subsampling=0)
     return buf.getvalue() if buf.tell() < len(png) else png
 
 

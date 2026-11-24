@@ -32,6 +32,10 @@ KEY_FILES: dict[str, str] = {
     "anthropic": ".anthropic_api_key",
 }
 
+# The Google Sheet log (app/sheets.py): the Apps Script web app's link and the shared secret, in a key file like the
+# API keys (lines url=… and secret=…), never from the environment.
+SHEET_KEY_FILE = ".google_sheet"
+
 _ENV_ASSIGNMENT = re.compile(r"^(?:export\s+)?[A-Z][A-Z0-9_]*\s*=\s*(.*)$")
 
 
@@ -54,6 +58,27 @@ def read_key_file(path: Path) -> str:
             line = match.group(1).strip()
         return line.strip("'\"").strip()
     return ""
+
+
+def read_sheet_file(path: Path) -> tuple[str, str]:
+    """The sheet's web-app link and shared secret from its key file; ("", "") when missing or incomplete."""
+    url = secret = ""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return url, secret
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        value = value.strip().strip("'\"").strip()
+        if name.strip().lower() == "url":
+            url = value
+        elif name.strip().lower() == "secret":
+            secret = value
+    local = url.startswith(("http://127.0.0.1:", "http://localhost:"))  # a test server on this computer only
+    return (url, secret) if (url.startswith("https://") or local) and secret else ("", "")
 
 
 class Settings(BaseSettings):
@@ -87,12 +112,30 @@ class Settings(BaseSettings):
     # make each finished panel job's print PNGs and detailed EPS in the background, so the downloads and ZIPs are
     # ready (or nearly) when asked for; on for the online server, where tracing is slow
     prepare_downloads: bool = False
+    # the clean-up of such ready-made downloads (JobManager.clean_downloads; the owner, 2026-11-24): every 10 minutes,
+    # the print-size panel PNGs and the EPS/SVG/PDF exports made more than cleanup_days ago are deleted (0 = never),
+    # and while less than cleanup_min_free_gb GB is free on the outputs disk, the oldest of them whatever their age
+    # (0 = off). Each is made again from the job's AI image on its next download. The online server: 7 and 2
+    cleanup_days: int = 0
+    cleanup_min_free_gb: float = 0.0
     # /panels, the studio's production-panel page (studio login), which the studio page links to; on here and on the
     # online server (the owner, 2026-11-07). JERSEY_PANELS_PAGE=false turns it and the link off
     panels_page: bool = True
     # the Dashboard counts nothing from before this date or time (ISO, e.g. 2026-11-08 = midnight on this machine's
     # clock); empty = everything. The owner's Mac's .env sets 2026-11-08; the online server shows everything
     dashboard_since: str = ""
+    # the client pages /client_<name> (app/clients.py): their logos and clients.json, git-ignored (client material);
+    # also tokens.json, the token prices (app/tokens.py)
+    client_assets_dir: Path = BASE_DIR / "client_assets"
+    # a login that opens only the client dashboard /client-dashboard (tokens per client, no costs); off when empty
+    partner_username: str = "partner"
+    partner_password: str = ""
+    # the Mac's Dashboard on the online server (app/sync.py). The Mac sets sync_url (the server's address) and
+    # sync_token; the server sets the same sync_token to accept it. machine_name labels this machine's jobs.
+    sync_url: str = ""
+    sync_token: str = ""
+    sync_minutes: int = 10
+    machine_name: str = "server"
     max_upload_mb: int = 20
     max_attachments: int = 3
     max_message_chars: int = 4000
@@ -104,6 +147,7 @@ class Settings(BaseSettings):
 
     # Keys live in private attributes, so no settings source (env, .env, init) can set them.
     _api_keys: dict[str, str] = PrivateAttr(default_factory=dict)
+    _sheet: tuple[str, str] = PrivateAttr(default=("", ""))
     _key_dir: Path = PrivateAttr(default=BASE_DIR)
 
     def __init__(self, *, key_file_dir: Path | None = None, **values: Any) -> None:
@@ -112,6 +156,7 @@ class Settings(BaseSettings):
         self._api_keys = {
             provider: read_key_file(self._key_dir / filename) for provider, filename in KEY_FILES.items()
         }
+        self._sheet = read_sheet_file(self._key_dir / SHEET_KEY_FILE)
 
     @property
     def openai_api_key(self) -> str:
@@ -120,6 +165,14 @@ class Settings(BaseSettings):
     @property
     def anthropic_api_key(self) -> str:
         return self._api_keys.get("anthropic", "")
+
+    @property
+    def sheet_url(self) -> str:
+        return self._sheet[0]
+
+    @property
+    def sheet_secret(self) -> str:
+        return self._sheet[1]
 
     @property
     def key_status(self) -> dict[str, str]:

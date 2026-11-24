@@ -153,6 +153,21 @@ a { color: var(--accent-text); }
   background: var(--accent); color: #fff;
 }
 .brand-mark .icon { width: 26px; height: 26px; }
+/* Client pages (/client_<name>, app/clients.py): the client's logo and name in its colours. The page sets the colour
+   tokens (--accent…, --brand-1/2/3, --step-*, --band-1/2) for light and dark. The logo sits on a white tile, so a logo
+   made for white stays as it is in dark mode too. */
+.brand-logo { display: grid; place-items: center; padding: 3px 6px; border-radius: 8px; background: #fff; }
+.brand-logo img { height: 30px; width: auto; }
+.brand-wordmark { font-family: Georgia, "Times New Roman", serif; font-size: 19px; letter-spacing: 0.01em; }
+.wm-1 { color: var(--brand-1); }
+.wm-2 { color: var(--brand-2); }
+.wm-3 { color: var(--brand-3); }
+.wm-text { color: var(--text); }
+[data-client] .app-header::before { /* a band in the logo's two main colours along the top */
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: linear-gradient(90deg, var(--band-1) 50%, var(--band-2) 50%);
+}
+[data-client] .step { background: var(--step-bg); color: var(--step-text); }
 .tabs { display: flex; align-self: stretch; gap: 2px; }
 .tab {
   position: relative; display: inline-flex; align-items: center; gap: 8px;
@@ -288,6 +303,9 @@ a { color: var(--accent-text); }
 [data-app="panels"] #tab-history { display: none; }
 /* The dashboard is only on the studio page. */
 [data-app="customer"] #tab-dashboard, [data-app="experiment"] #tab-dashboard, [data-app="panels"] #tab-dashboard { display: none; }
+/* The "Customer dashboard" tab (customerboard.js): on a client page only */
+#tab-tokens { display: none; }
+[data-client] #tab-tokens { display: inline-flex; }
 
 .choices { display: grid; gap: 8px; }
 .choice { position: relative; display: block; cursor: pointer; }
@@ -885,6 +903,42 @@ dialog::backdrop { background: rgba(8, 11, 18, 0.55); }
 .dash-error { color: var(--danger); white-space: normal; max-width: 320px; }
 .dash-job .chev { transition: transform 0.15s; }
 .dash-job .chev.is-open { transform: rotate(180deg); }
+/* ---------- Our tokens (2026-11-23): a client page's purse and the hint by Generate / Send (tokens.js), and the client
+   dashboard (/client-dashboard, clientboard.js) ---------- */
+[data-app="clientboard"] .header-actions { margin-left: auto; }
+.token-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface-2); font-size: 13px; color: var(--text-2); white-space: nowrap;
+}
+.token-chip-value { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+a.token-chip { text-decoration: none; }
+a.token-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.token-chip.is-empty { border-color: var(--danger-border); background: var(--danger-soft); }
+.token-chip.is-empty .token-chip-value { color: var(--danger); }
+.token-need { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.composer-foot { flex-wrap: wrap; }
+.composer-foot .token-need { white-space: nowrap; }
+.token-need.is-short { color: var(--danger); white-space: normal; }
+.composer-foot .token-need.is-short { flex: 1 1 100%; order: 3; } /* its own line under the hint */
+/* Design chats on both dashboards (2026-11-23): a chat's row opens its messages */
+.dash-chat-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.dash-msgtable .dash-msgcell { min-width: 260px; max-width: 520px; }
+.dash-msg { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.dash-reply { margin-top: 4px; font-size: 12px; color: var(--text-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dash-table tr.dash-msgrow.is-open > td { background: var(--surface-2); }
+.cb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.cb-name { font-size: 18px; font-weight: 700; }
+.cb-parts { display: flex; flex-wrap: wrap; gap: 6px; }
+.cb-part {
+  display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 9px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface-2); font-size: 12.5px; color: var(--text-2); white-space: nowrap;
+}
+.cb-part strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.cb-part.is-failed { border-style: dashed; background: none; color: var(--text-3); }
+.cb-thumb-btn { display: block; padding: 0; border: 0; background: none; border-radius: 6px; cursor: zoom-in; }
+.cb-thumb-btn .dash-thumb { width: 44px; height: 44px; }
+.cb-add { display: grid; grid-template-columns: minmax(110px, 160px) minmax(110px, 160px) minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+@media (max-width: 720px) { .cb-add { grid-template-columns: minmax(0, 1fr); } }
 .job-card {
   display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; text-align: left;
   border: 1px solid var(--border); border-radius: var(--radius-l); background: var(--surface);

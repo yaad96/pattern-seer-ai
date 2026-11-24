@@ -14,6 +14,7 @@ from app.config import Settings
 def make_settings(tmp_path: Path, **overrides) -> Settings:
     values = {
         "output_dir": tmp_path / "outputs",
+        "client_assets_dir": tmp_path / "client_assets",  # never the real client pages (client_assets/)
         "enable_mock_provider": True,
         "rate_limit_per_hour": 0,
         "provider_timeout_s": 30.0,

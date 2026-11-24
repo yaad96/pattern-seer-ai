@@ -8,7 +8,9 @@ import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
 import { initDashboard } from './dashboard.js';
 import { initDesign } from './design.js';
 import { initHistory } from './history.js';
+import { initCustomerBoard } from './customerboard.js';
 import { initRecreate } from './recreate.js';
+import { purseChip, startPurse } from './tokens.js';
 import { callout } from './ui.js';
 
 const TABS = ['recreate', 'design', 'history', 'dashboard']; // the dashboard only on the studio page
@@ -18,9 +20,15 @@ const TABS = ['recreate', 'design', 'history', 'dashboard']; // the dashboard on
 // /panels (studio login only, 2026-11-07): the studio's production panels, which the studio page links to. It is the
 // /customerep flow with the studio's details (output settings, View prompt, costs, image details), the back mirrored
 // or copied, and the full Design tab; no History tab; its own saved state; a link back to the studio page.
+// /client_<name> (2026-11-22, app/clients.py): a client's own /customerep, in the client's name, logo and colours
+// (data-client=<name>), with its own saved state and a sign-out that returns to its own sign-in page. Since
+// 2026-11-23 it shows the client's tokens in the header and what a job needs next to Generate / Send (tokens.js),
+// and has a third tab, the client's own "Customer dashboard" (customerboard.js), which the header's chip opens.
 const MODE = document.documentElement.dataset.app || 'studio';
+const CLIENT = document.documentElement.dataset.client || '';
 const CUSTOMER = MODE === 'customer' || MODE === 'experiment';
 const PANELS_PAGE = MODE === 'panels';
+const KEY = CLIENT ? `client_${CLIENT}` : MODE; // saved-state prefix of the pages with their own state
 
 function isDemo(config) {
   return config.providers.length === 1 && config.providers[0].name === 'mock';
@@ -62,7 +70,7 @@ function renderSiteBanner(closed) {
   document.getElementById('banner-slot').prepend(h('div', { class: 'banner is-closed', id: 'site-banner', role: 'status' },
     h('div', { class: 'banner-inner' }, icon('alert'),
       h('p', null, h('strong', null, 'The site is closed.'), ' ',
-        'Only your studio login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.'))));
+        'Only your head admin login can use it. Everyone else, the demo link included, gets a “page not found” (404) error. Open it again on the Dashboard.'))));
 }
 
 function renderCustomerBanner(config) {
@@ -76,7 +84,8 @@ function renderCustomerBanner(config) {
 function renderHeaderActions(config, extras = []) {
   const items = [...extras];
   if (config.login_enabled) {
-    items.push(h('a', { class: 'btn btn-sm', href: '/logout' }, icon('logout'), 'Log out'));
+    const href = CLIENT ? `/logout?next=${encodeURIComponent(window.location.pathname)}` : '/logout';
+    items.push(h('a', { class: 'btn btn-sm', href }, icon('logout'), 'Log out'));
   }
   if (items.length) document.querySelector('.app-header-inner').appendChild(h('div', { class: 'header-actions' }, items));
 }
@@ -84,7 +93,7 @@ function renderHeaderActions(config, extras = []) {
 function initTabs(onShow, names = TABS) {
   const tabs = names.map((name) => document.getElementById(`tab-${name}`));
   const panels = names.map((name) => document.getElementById(`panel-${name}`));
-  const tabKey = CUSTOMER || PANELS_PAGE ? `${MODE}.tab` : 'tab';
+  const tabKey = CUSTOMER || PANELS_PAGE ? `${KEY}.tab` : 'tab';
   let current = null;
 
   function select(name, focus) {
@@ -145,12 +154,12 @@ function wireGlobalInput(tabs, recreate, design) {
 function renderBootError(bootEl, message) {
   const retry = h('button', { type: 'button', class: 'btn btn-primary' }, icon('refresh'), 'Try again');
   retry.addEventListener('click', () => {
-    replace(bootEl, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Loading Jersey HD Studio…');
+    replace(bootEl, h('span', { class: 'spinner', 'aria-hidden': 'true' }), CLIENT ? 'Loading…' : 'Loading Jersey HD Studio…');
     boot();
   });
   replace(bootEl, h('div', { class: 'empty' },
     h('div', { class: 'empty-icon' }, icon('alert')),
-    h('p', { class: 'empty-title' }, 'Jersey HD Studio could not start'),
+    h('p', { class: 'empty-title' }, CLIENT ? 'This page could not start' : 'Jersey HD Studio could not start'),
     h('p', { class: 'empty-text' }, message),
     retry));
 }
@@ -167,10 +176,15 @@ async function boot() {
   if (CUSTOMER) {
     try {
       renderCustomerBanner(config);
-      renderHeaderActions(config);
-      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: MODE });
-      const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: MODE });
-      const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab
+      startPurse(CLIENT); // a client page: its purse of our tokens (nothing elsewhere)
+      renderHeaderActions(config, CLIENT ? [purseChip({ href: '#tokens' })] : []);
+      const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: KEY, client: CLIENT });
+      const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: KEY, client: CLIENT });
+      // a client page also has its "Customer dashboard" (customerboard.js); no History tab anywhere here
+      const board = CLIENT ? initCustomerBoard(document.getElementById('panel-tokens'), { client: CLIENT }) : null;
+      const tabs = board
+        ? initTabs((name) => (name === 'tokens' ? board.activate() : board.deactivate()), ['recreate', 'design', 'tokens'])
+        : initTabs(() => {}, ['recreate', 'design']);
       wireGlobalInput(tabs, recreate, design);
       bootEl.remove();
     } catch (err) {
@@ -185,7 +199,7 @@ async function boot() {
       renderSiteBanner(config.site_closed);
       renderBanner(config);
       renderHeaderActions(config,
-        [h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the studio page' }, icon('arrow-left'), 'Main page')]);
+        [h('a', { class: 'btn btn-sm btn-ghost', href: '/', title: 'Back to the main page' }, icon('arrow-left'), 'Main page')]);
       const recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, staff: true, keyPrefix: MODE });
       const design = initDesign(document.getElementById('panel-design'), { keyPrefix: MODE });
       const tabs = initTabs(() => {}, ['recreate', 'design']); // no History tab (it is on the studio page)

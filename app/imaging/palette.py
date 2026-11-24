@@ -29,12 +29,25 @@ def quantize_pixels(pixels: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]
     return palette[order], counts[order]
 
 
+def symmetric_indices(n: int, m: int) -> np.ndarray:
+    """About `m` of the indices 0 … n-1, evenly spread and mirror-symmetric (i is in it exactly when n-1-i is). An image
+    and its mirror image are then sampled at matching pixels, so a back panel mirrored from the front gets exactly the
+    front's colours (2026-11-23: the owner saw them differ by a few units)."""
+    if m >= n:
+        return np.arange(n)
+    half = np.floor(np.linspace(0, n - 1, m)[: (m + 1) // 2]).astype(np.int64)
+    return np.unique(np.concatenate([half, n - 1 - half]))
+
+
 def dominant_colors(img: Image.Image, k: int = 8) -> list[PaletteEntry]:
-    """Up to `k` dominant colours, largest share first; fully transparent pixels are ignored."""
-    small = img
-    if max(img.size) > SAMPLE_LONG_EDGE:
-        small = img.resize(scaled_size(img.size, SAMPLE_LONG_EDGE), Image.Resampling.NEAREST)  # keeps exact colours
-    rgba = np.asarray(small.convert("RGBA")).reshape(-1, 4)
+    """Up to `k` dominant colours, largest share first; fully transparent pixels are ignored. Read from an evenly
+    spread grid of exact pixels (SAMPLE_LONG_EDGE per side), the same for an image and its mirror image."""
+    rgba = np.asarray(img.convert("RGBA"))
+    height, width = rgba.shape[:2]
+    if max(width, height) > SAMPLE_LONG_EDGE:
+        w, h = scaled_size((width, height), SAMPLE_LONG_EDGE)
+        rgba = rgba[np.ix_(symmetric_indices(height, h), symmetric_indices(width, w))]
+    rgba = rgba.reshape(-1, 4)
     pixels = rgba[rgba[:, 3] > 0, :3]
     if not len(pixels):
         return []
