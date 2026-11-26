@@ -299,7 +299,9 @@ a { color: var(--accent-text); }
 /* /customerep (the client demo page): no History tab and no model status. */
 [data-app="customer"] #tab-history, [data-app="customer"] #provider-status,
 [data-app="experiment"] #tab-history, [data-app="experiment"] #provider-status { display: none; }
-/* A client's own page (/client_<name>) has its History tab since 2026-11-24: the jobs that client made. */
+/* The History tab is a client page's alone since 2026-11-25 (/client_<name>: the jobs that client made); the head
+   admin's History is a tab of the Supreme dashboard. */
+#tab-history { display: none; }
 [data-client] #tab-history { display: inline-flex; }
 /* /panels (the studio's panel page): no History tab; the model status stays. */
 [data-app="panels"] #tab-history { display: none; }
@@ -896,6 +898,10 @@ dialog::backdrop { background: rgba(8, 11, 18, 0.55); }
 .dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dash-table .nowrap { white-space: nowrap; }
 .dash-table tr.dash-job.is-open > td { background: var(--surface-2); }
+/* a row that opens its job (ui.js rowOpens: the Supreme dashboard's job rows open the job's History view) */
+.dash-table tr.is-clickable { cursor: pointer; }
+.dash-table tr.is-clickable:hover > td { background: var(--accent-soft); }
+.dash-table tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dash-table tr.dash-calls > td { background: var(--surface-2); padding: 0 8px 12px 48px; }
 .dash-calltable { font-size: 12.5px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .dash-jobcell { display: flex; align-items: center; gap: 10px; }

@@ -68,12 +68,13 @@ function dayLabel(key) {
  *   title, prefsKey; headerLinks(overview) -> elements for the header's right side (before Log out);
  *   toolbar: elements for the title row; extraTabs: [{id, label, el, onShow()}] after the four shared ones;
  *   jobsTab: {el, onShow()} to use instead of the shared Jobs tab (the Supreme dashboard's has the costs);
+ *   openJob(jobId): a click on a job's row in a jobs table opens that job (the Supreme dashboard: its History view);
  *   todoExtra() -> elements under the To do cards; clientCosts(days) -> Promise<Map slug -> {cost, tokens}> for the
  *   Clients tab's real-cost columns (the Supreme dashboard); onRefresh() when Refresh is pressed.
  */
 export function startBoard(options) {
   const { title, prefsKey, headerLinks, toolbar = [], extraTabs = [], jobsTab = null, todoExtra = null,
-    clientCosts = null, onRefresh = null } = options;
+    clientCosts = null, onRefresh = null, openJob = null } = options;
   const prefs = { range: '0', jobsRange: '7', jobsClient: '', payFilter: 'all', ...(storage.get(prefsKey, {}) || {}) };
   if (!RANGES.some(([v]) => v === prefs.range)) prefs.range = '0';
   if (!RANGES.some(([v]) => v === prefs.jobsRange)) prefs.jobsRange = '7';
@@ -552,7 +553,7 @@ export function startBoard(options) {
     const c = detail.client;
     const made = detail.jobs.filter((j) => !j.deleted).length;
     const k = costs ? costs.get(c.slug) || { cost: 0, tokens: 0 } : null;
-    const jobsBody = detail.jobs.length ? jobsTable(detail.jobs, { openChats, ids: true }) : h('div', { class: 'empty' },
+    const jobsBody = detail.jobs.length ? jobsTable(detail.jobs, { openChats, ids: true, onOpen: openJob }) : h('div', { class: 'empty' },
       h('p', { class: 'empty-title' }, 'No jobs in this period'),
       h('p', { class: 'empty-text' }, 'This client’s jobs appear here with the tokens each one used.'));
     replace(panel, offNote(), clientFilters(c.slug),
@@ -887,7 +888,7 @@ export function startBoard(options) {
     }
     const dayCards = [...groups].map(([day, list]) => {
       const tokens = list.reduce((acc, j) => acc + (j.tokens || 0), 0);
-      return card(day ? dayLabel(day) : 'Unknown day', jobsTable(list, { openChats, ids: true, client: true }), {
+      return card(day ? dayLabel(day) : 'Unknown day', jobsTable(list, { openChats, ids: true, client: true, onOpen: openJob }), {
         note: `${fmtInt(list.length)} ${list.length === 1 ? 'job' : 'jobs'} · ${fmtInt(tokens)} tokens`, bodyClass: 'dash-scroll',
       });
     });

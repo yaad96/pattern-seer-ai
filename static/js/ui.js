@@ -7,6 +7,23 @@ import { h, icon, uid, clear, replace } from './dom.js';
 /* ---------- announcements & toasts ---------- */
 
 let liveTimer = 0;
+/** Make a table row open something on a click or on Enter (a job's row: its History view). The row's own buttons
+ * and links keep their meaning, and selecting text in the row is not a click. */
+export function rowOpens(tr, open, label) {
+  tr.classList.add('is-clickable');
+  tr.tabIndex = 0;
+  if (label) tr.title = label;
+  tr.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input, select, textarea, summary, label')) return;
+    if (String(window.getSelection ? window.getSelection() : '').trim()) return;
+    open();
+  });
+  tr.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target === tr) open();
+  });
+  return tr;
+}
+
 export function announce(text) {
   const live = document.getElementById('sr-live');
   if (!live) return;

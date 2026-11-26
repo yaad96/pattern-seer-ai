@@ -848,14 +848,15 @@ export function initDesign(root, { customer = false, keyPrefix = null, client = 
 
   /* ---------- start ---------- */
   const saved = storage.get(sessionKey, null);
+  let ready = Promise.resolve(); // settled once the saved chat is back (continueFrom does nothing while it loads)
   if (saved && Array.isArray(saved.jobIds) && saved.jobIds.length) {
     state.sessionId = typeof saved.sessionId === 'string' && SESSION_RE.test(saved.sessionId) ? saved.sessionId : null;
-    loadTurns(saved.jobIds.filter((id) => typeof id === 'string' && JOB_ID_RE.test(id)), saved.parent);
+    ready = loadTurns(saved.jobIds.filter((id) => typeof id === 'string' && JOB_ID_RE.test(id)), saved.parent).catch(() => {});
   } else {
     renderWelcome();
   }
   updateComposer();
   if (client) onPurse(() => updateComposer()); // the purse read or changed: the hint and Send follow it
 
-  return { addAttachments, continueFrom, removeJob };
+  return { addAttachments, continueFrom, removeJob, ready };
 }

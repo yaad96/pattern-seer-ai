@@ -15,7 +15,7 @@ import { h, icon, replace, fmtDateTime, fmtInt, fmtSeconds, fmtUsd, storage } fr
 import { statusBadge } from './jobs.js';
 import { modelLabel } from './results.js';
 import { TOKEN_ITEMS } from './tokens.js';
-import { callout, confirmDialog, loadingRow, segmented, setBusy, toast } from './ui.js';
+import { callout, confirmDialog, loadingRow, rowOpens, segmented, setBusy, toast } from './ui.js';
 
 const PREFS_KEY = 'dashboard.prefs';
 const DAY_MS = 86400000;
@@ -84,6 +84,8 @@ function addInto(total, part) {
   for (const key of Object.keys(part)) total[key] = (total[key] || 0) + part[key];
   return total;
 }
+
+const OPENS = 'Open this job: its pictures, downloads, prompts and API calls';
 
 export function initDashboard({ onOpenJob, onSiteChange, onReport } = {}) {
   const say = (message, kind) => toast(message, { kind, raw: true });
@@ -597,6 +599,7 @@ export function initDashboard({ onOpenJob, onSiteChange, onReport } = {}) {
       tokensOn() ? h('td', { class: 'num' }, ourCell(job, r.made)) : null,
       h('td', null, job.status ? statusBadge(job.status) : null),
       h('td', { class: 'nowrap' }, callsBtn, openBtn));
+    if (openBtn) rowOpens(main, () => onOpenJob(job.id), OPENS); // the whole row, like its Details button
     const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: tokensOn() ? '9' : '8' }, open ? callsTable(r.calls) : null));
     callsBtn.addEventListener('click', () => {
       const now = !expanded.has(key);
@@ -664,6 +667,7 @@ export function initDashboard({ onOpenJob, onSiteChange, onReport } = {}) {
       h('td', { class: 'num' }, cost),
       tokensOn() ? h('td', { class: 'num' }, ourCell(job, r.made)) : null,
       h('td', { class: 'nowrap' }, callsBtn, openBtn));
+    if (openBtn) rowOpens(main, () => onOpenJob(job.id), OPENS); // the whole row, like its Details button
     const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: tokensOn() ? '11' : '10' }, open ? callsTable(r.calls) : null));
     callsBtn.addEventListener('click', () => {
       const now = !expanded.has(key);

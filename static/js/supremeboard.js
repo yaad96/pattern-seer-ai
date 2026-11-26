@@ -3,21 +3,29 @@
  * head admin's own page. The Partner dashboard's four tabs (boards.js: To do, Clients, Payments, Jobs), here with
  * what only the head admin sees (the real cost per client, taking tokens back, every login's jobs with their API
  * calls), plus two of its own:
+ *   History     every job with everything about it (history.js, scope "studio"): pictures, downloads, exports, the
+ *               prompts, the API calls, the tokens it cost its client, Delete. It was the main page's third tab until
+ *               2026-11-25 (the owner: "in supreme dashboard, move the history inside it"); /#history and
+ *               /?job=<id>#history lead here. A click on a job's row in Jobs or on a client's page opens that job's
+ *               view here too (the owner: "when I click on it, the expanded history component should be seen")
  *   LLM Costs   what OpenAI and Claude charged: the tiles, cost per day, by output type (dashboard.js)
  *   Settings    the site switch, the bKash number and packages clients buy, the Google Sheet and its script, the
  *               token prices, the disk
  * and "Open the Google Sheet" at the top. In English, without the Bangla layer.
  */
 import { api, loadConfig } from './api.js';
-import { h, icon, replace, fmtDateTime, fmtInt } from './dom.js';
+import { h, icon, replace, fmtDateTime, fmtInt, storage } from './dom.js';
 import { card, startBoard, taka } from './boards.js';
 import { initDashboard, sum } from './dashboard.js';
+import { initHistory } from './history.js';
 import { pricesParts } from './tokenviews.js';
 import { callout, copyText, field, inputEl, loadingRow, modal, setBusy, toast } from './ui.js';
 
 const GB = 1e9;
 const DAY_MS = 86400000;
-loadConfig().catch(() => {}); // the model names in the Jobs tab (they show as ids until it has loaded)
+const JOB_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{6}$/;
+const config = loadConfig(); // the model names in the Jobs tab (ids until it has loaded), and what History needs
+config.catch(() => {});
 
 let board = null;
 let report = null; // GET /api/admin/usage, as dashboard.js last read it
@@ -28,9 +36,55 @@ function freshen(ms) {
   if (Date.now() - reportAt > ms) dash.reload();
 }
 
+/* ---------- History: every job, with everything about it (history.js; the main page's tab until 2026-11-25) ---------- */
+const historyEl = h('div', null, loadingRow('Loading…'));
+let historyView = null;
+
+/** A job deleted here: the image tools' pages forget it too (they would only say it no longer exists), and the
+ * tables that list it are read again. */
+function onDeleted(jobId) {
+  for (const key of ['recreate.lastJob', 'panels.lastJob']) {
+    if (storage.get(key, null) === jobId) storage.remove(key);
+  }
+  dash.reload();
+  if (board) board.reload();
+}
+
+async function ensureHistory() {
+  if (!historyView) {
+    await config; // the model names and the export choices
+    if (!historyView) {
+      historyView = initHistory(historyEl, {
+        scope: 'studio',
+        // a design goes on in the image tools' Design tab, on the main page
+        onContinue: (job) => { window.location.href = `/?continue=${encodeURIComponent(job.id)}#design`; },
+        onDeleted,
+      });
+    }
+  }
+  return historyView;
+}
+
+async function showHistory() {
+  try {
+    (await ensureHistory()).activate();
+  } catch (err) {
+    replace(historyEl, callout('error', err.message));
+  }
+}
+
+/** A job's whole view (the History drawer), from any row that names a job. */
+async function openJob(jobId) {
+  try {
+    (await ensureHistory()).open(jobId);
+  } catch (err) {
+    toast(err.message, { kind: 'error' });
+  }
+}
+
 /* ---------- LLM Costs and Jobs (dashboard.js), with one filter bar moved to whichever is open ---------- */
 const dash = initDashboard({
-  onOpenJob: (jobId) => { window.location.href = `/?job=${encodeURIComponent(jobId)}#history`; }, // History, on the main page
+  onOpenJob: openJob, // "Details", and a click on the job's row
   onSiteChange: () => renderHealth(),
   onReport: (next) => {
     report = next;
@@ -298,6 +352,10 @@ function renderStorage() {
 }
 
 /* ---------- the page ---------- */
+// /supreme-dashboard?job=<id>#history (the old /?job=<id>#history): that job's view, over the History tab
+const wanted = new URLSearchParams(window.location.search).get('job');
+if (wanted) window.history.replaceState(null, '', '/supreme-dashboard#history');
+
 function show(slot) {
   slot.appendChild(dash.filters); // the one filter bar, under the open tab
   freshen(1000); // opening the tab reads the numbers again (not when they were read a moment ago, as the page starts)
@@ -313,8 +371,10 @@ board = startBoard({
     return healthBox;
   },
   clientCosts,
+  openJob, // a job's row on a client's page
   jobsTab: { el: jobsTab, onShow: () => show(jobsFilters) },
   extraTabs: [
+    { id: 'history', label: 'History', el: historyEl, onShow: showHistory },
     { id: 'costs', label: 'LLM Costs', el: costsTab, onShow: () => show(costsFilters) },
     { id: 'settings', label: 'Settings', el: settingsTab, onShow: loadSettings },
   ],
@@ -326,3 +386,4 @@ board = startBoard({
 });
 renderHealth();
 freshen(5000); // the report also feeds "Is everything running?", the sheet's link and Settings
+if (wanted && JOB_ID_RE.test(wanted)) openJob(wanted);

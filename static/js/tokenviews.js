@@ -8,7 +8,7 @@ import { fileUrl } from './api.js';
 import { h, icon, replace, fmtDateTime, fmtInt } from './dom.js';
 import { statusBadge } from './jobs.js';
 import { TOKEN_ITEMS, panelItems } from './tokens.js';
-import { openLightbox } from './ui.js';
+import { openLightbox, rowOpens } from './ui.js';
 
 export const ITEM_ORDER = ['front', 'back_picture', 'back_same', 'sleeve', 'design'];
 
@@ -59,7 +59,7 @@ function chatStatus(statuses) {
 
 /** A Design chat: one row with its tokens in all, which opens its messages (oldest first) with the client's words,
  * the designer's reply and each message's tokens. */
-function chatRows(group, openChats, client) {
+function chatRows(group, openChats, client, onOpen) {
   const msgs = [...group].sort((a, b) => a.id.localeCompare(b.id)); // oldest first (ids sort by creation, to the ms)
   const first = msgs[0];
   const last = msgs[msgs.length - 1];
@@ -87,7 +87,7 @@ function chatRows(group, openChats, client) {
       running ? h('div', { class: 'dash-sub' }, 'More when the running one finishes') : null),
     h('td', null, statusBadge(chatStatus(msgs.map((j) => j.status)))),
     h('td', { class: 'nowrap' }, toggle));
-  const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: client ? '7' : '6' }, open ? messagesTable(msgs) : null));
+  const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: client ? '7' : '6' }, open ? messagesTable(msgs, onOpen) : null));
   toggle.addEventListener('click', () => {
     const now = !openChats.has(first.chat);
     if (now) openChats.add(first.chat);
@@ -96,16 +96,19 @@ function chatRows(group, openChats, client) {
     toggle.querySelector('.chev').classList.toggle('is-open', now);
     main.classList.toggle('is-open', now);
     detail.hidden = !now;
-    replace(detail.firstChild, now ? messagesTable(msgs) : null);
+    replace(detail.firstChild, now ? messagesTable(msgs, onOpen) : null);
   });
   return h('tbody', null, main, detail);
 }
 
-function messagesTable(msgs) {
+/** onOpen(jobId): a row opens that job (a dashboard with a History: the whole view of the job). */
+const opens = (tr, job, onOpen) => (onOpen && !job.deleted ? rowOpens(tr, () => onOpen(job.id), 'Open this job in History') : tr);
+
+function messagesTable(msgs, onOpen) {
   return h('table', { class: 'dash-table dash-calltable dash-msgtable' },
     h('thead', null, h('tr', null, ['Time', 'Picture', 'Message', 'Tokens', 'Status']
       .map((t, i) => h('th', { class: i === 3 ? 'num' : null }, t)))),
-    h('tbody', null, msgs.map((job) => h('tr', { class: 'dash-msgrow' },
+    h('tbody', null, msgs.map((job) => opens(h('tr', { class: 'dash-msgrow' },
       h('td', { class: 'nowrap' }, fmtDateTime(job.created_at)),
       h('td', null, picture(job)),
       h('td', { class: 'dash-msgcell' },
@@ -115,36 +118,37 @@ function messagesTable(msgs) {
           h('span', { 'data-no-translate': '' }, job.reply)) : null),
       h('td', { class: 'num' }, job.running ? h('span', { class: 'muted' }, 'Charged when it finishes')
         : job.failed.length ? part('design', 0, true) : h('strong', null, fmtInt(job.tokens))),
-      h('td', null, statusBadge(job.status))))));
+      h('td', null, statusBadge(job.status))), job, onOpen))));
 }
 
-function jobRow(job, ids, client) {
+function jobRow(job, ids, client, onOpen) {
   const thumb = picture(job);
   const parts = job.running
     ? planned(job).map((item) => h('span', { class: 'cb-part' }, h('span', null, TOKEN_ITEMS[item] || 'Image')))
     : [...[...job.items].sort((a, b) => ITEM_ORDER.indexOf(a.item) - ITEM_ORDER.indexOf(b.item))
       .map((i) => part(i.item, i.tokens, false)), ...(job.waived || []).map((item) => part(item, 0, false)),
       ...job.failed.map((item) => part(item, 0, true))];
-  return h('tr', null,
+  return opens(h('tr', null,
     h('td', { class: 'nowrap' }, fmtDateTime(job.created_at), ids ? h('div', { class: 'dash-id', 'data-no-translate': '' }, job.id) : null),
     client ? h('td', { 'data-no-translate': '' }, job.client_name || job.client || '') : null,
     h('td', null, thumb),
     h('td', null, h('div', { class: 'cb-parts' }, parts.length ? parts : h('span', { class: 'muted' }, '–'))),
     h('td', { class: 'num' }, job.running ? h('span', { class: 'muted' }, 'Charged when it finishes') : h('strong', null, fmtInt(job.tokens))),
     h('td', null, job.deleted ? h('span', { class: 'badge badge-danger' }, 'Deleted') : statusBadge(job.status)),
-    h('td', null));
+    h('td', null)), job, onOpen);
 }
 
 
 /** The jobs (newest first) as a table, or null when there are none. openChats: the chats kept open (a Set of chat
  * ids, kept by the page across reloads); ids: show each job's id (the dashboards); client: a Client column (the
- * dashboards' Jobs tab, which lists every client's jobs: each job then has client_name). */
-export function jobsTable(jobs, { openChats, ids = false, client = false }) {
+ * dashboards' Jobs tab, which lists every client's jobs: each job then has client_name); onOpen(jobId): a click on a
+ * job's row opens that job (the Supreme dashboard: in its History view). */
+export function jobsTable(jobs, { openChats, ids = false, client = false, onOpen = null }) {
   if (!jobs.length) return null;
   return h('table', { class: 'dash-table' },
     h('thead', null, h('tr', null, ['Time', client ? 'Client' : null, 'Picture', 'What was made', 'Tokens', 'Status', '']
       .filter((t) => t !== null).map((t) => h('th', { class: t === 'Tokens' ? 'num' : null }, t)))),
-    byChat(jobs).map((g) => (isChat(g[0]) ? chatRows(g, openChats, client) : h('tbody', null, jobRow(g[0], ids, client)))));
+    byChat(jobs).map((g) => (isChat(g[0]) ? chatRows(g, openChats, client, onOpen) : h('tbody', null, jobRow(g[0], ids, client, onOpen)))));
 }
 
 /** The token prices, one pill per item ("Back (same as front) free"). */

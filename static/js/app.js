@@ -1,9 +1,10 @@
 /**
- * Entry point: loads GET /api/config, renders the provider status and the demo banner, wires the
- * three tabs (Recreate / Design / History) and routes pasted or dropped images to the active tab.
+ * Entry point: loads GET /api/config, renders the provider status and the demo banner, wires the tabs (Recreate and
+ * Design; a client's page also has its own History and Customer dashboard) and routes pasted or dropped images to
+ * the active tab. The head admin's History is a tab of the Supreme dashboard since 2026-11-25.
  */
 import './i18n.js';
-import { loadConfig } from './api.js';
+import { api, loadConfig } from './api.js';
 import { h, icon, replace, storage, imageFilesFrom, hasFiles } from './dom.js';
 import { initDesign } from './design.js';
 import { initHistory } from './history.js';
@@ -12,11 +13,13 @@ import { initCustomerBoard } from './customerboard.js';
 import { initRecreate } from './recreate.js';
 import { withoutModel } from './results.js';
 import { purseChip, refreshPurse, startPurse } from './tokens.js';
-import { callout } from './ui.js';
+import { callout, toast } from './ui.js';
 
-const TABS = ['recreate', 'design', 'history'];
+const TABS = ['recreate', 'design'];
 // The head admin's dashboard is its own page since 2026-11-24, /supreme-dashboard (supremeboard.js), linked from
-// the header here; it was this page's fourth tab, #dashboard, which still leads there.
+// the header here; it was this page's fourth tab, #dashboard, which still leads there. Since 2026-11-25 the head
+// admin's History is a tab of that dashboard too (the owner: "in supreme dashboard, move the history inside it"):
+// #history here leads there, with ?job=<id> to that job's view.
 // /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
 // Design, without the History tab, the model status, the output settings, costs or prompts.
 // /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
@@ -259,8 +262,15 @@ async function boot() {
     }
     return;
   }
-  // the Dashboard tab's old address, opened afresh or typed into the open page
-  const toSupreme = () => window.location.hash === '#dashboard' && (window.location.replace('/supreme-dashboard'), true);
+  // the old addresses of what moved to the Supreme dashboard (opened afresh or typed into the open page): the
+  // Dashboard tab, and History with one job's view (/?job=<id>#history)
+  const toSupreme = () => {
+    const { hash, search } = window.location;
+    if (hash !== '#dashboard' && hash !== '#history') return false;
+    const job = hash === '#history' ? new URLSearchParams(search).get('job') : null;
+    window.location.replace(`/supreme-dashboard${job ? `?job=${encodeURIComponent(job)}` : ''}${hash === '#history' ? '#history' : ''}`);
+    return true;
+  };
   if (toSupreme()) return;
   window.addEventListener('hashchange', toSupreme);
   try {
@@ -270,39 +280,25 @@ async function boot() {
     renderHeaderActions(config,
       [h('a', { class: 'btn btn-sm btn-ghost', href: '/supreme-dashboard' }, icon('chart'), 'Supreme dashboard')]);
     let tabs = null;
-    let historyTab = null;
-    const jobsBox = initJobsBox({
+    let recreate = null;
+    const jobsBox = initJobsBox({ // no History tab here (it is in the Supreme dashboard): the job is shown again here
       key: 'recreate.bgJobs',
-      history: true,
       openJob: (jobId) => {
-        tabs.select('history', false);
-        historyTab.open(jobId);
-      },
-      onEnded: () => {
-        if (historyTab && tabs && tabs.current() === 'history') historyTab.activate();
+        tabs.select('recreate', false);
+        recreate.show(jobId);
       },
     });
-    const recreate = initRecreate(document.getElementById('panel-recreate'), { jobsBox });
+    recreate = initRecreate(document.getElementById('panel-recreate'), { jobsBox });
     const design = initDesign(document.getElementById('panel-design'));
-    historyTab = initHistory(document.getElementById('panel-history'), {
-      onContinue: (job) => {
-        tabs.select('design', false);
-        design.continueFrom(job);
-      },
-      onDeleted: (jobId) => {
-        design.removeJob(jobId);
-        recreate.forgetJob(jobId);
-      },
-    });
-    tabs = initTabs((name) => {
-      if (name === 'history') historyTab.activate();
-    });
-    // the Supreme dashboard's "Details" on a job: /?job=<id>#history opens that job here
-    const wanted = new URLSearchParams(window.location.search).get('job');
+    tabs = initTabs(() => {});
+    // History's "Continue in chat" (now in the Supreme dashboard): /?continue=<job id>#design goes on with that
+    // design here, once the chat saved in this browser is back
+    const wanted = new URLSearchParams(window.location.search).get('continue');
     if (wanted && /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/.test(wanted)) {
-      window.history.replaceState(null, '', '/#history');
-      tabs.select('history', false);
-      historyTab.open(wanted);
+      window.history.replaceState(null, '', '/#design');
+      tabs.select('design', false);
+      design.ready.then(() => api.job(wanted)).then((job) => design.continueFrom(job))
+        .catch((err) => toast(err.message, { kind: 'error' }));
     }
     wireGlobalInput(tabs, recreate, design);
     bootEl.remove();
