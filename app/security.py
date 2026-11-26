@@ -148,8 +148,9 @@ PAGE_ROUTES = (
     ("GET", re.compile(r"/api/jobs/[^/]+/downloads")),
     ("GET", re.compile(r"/files/[^/]+/[^/]+")),
 )
-# What the demo login may reach: the demo page /customerep and what it calls (not the client pages).
-DEMO_ROUTES = (("GET", re.compile(r"/customerep/?")), *PAGE_ROUTES)
+# What the demo login may reach: the demo page /customerep and what it calls (not the client pages). Since 2026-11-26
+# also the list of its own jobs, for its page's History tab, as a client login has (the route gives it no one else's).
+DEMO_ROUTES = (("GET", re.compile(r"/customerep/?")), ("GET", re.compile(r"/api/jobs")), *PAGE_ROUTES)
 
 
 def client_routes(slug: str) -> tuple:

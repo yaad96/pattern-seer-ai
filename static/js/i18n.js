@@ -242,12 +242,11 @@ const BN = new Map(Object.entries({
   'Original size (as the AI made it)': 'অরিজিনাল সাইজ (এআই যেমন বানিয়েছে)',
   'Print size: every panel at its 3XL print size at 300 dpi (big files). Original size: the images exactly as the AI made them.': 'প্রিন্ট সাইজ: প্রতিটি প্যানেল তার 3XL প্রিন্ট সাইজে, 300 dpi-তে (বড় ফাইল)। অরিজিনাল সাইজ: এআই যেমন বানিয়েছে হুবহু সেই ছবি।',
   "A panel's PNG file is missing on disk.": 'একটি প্যানেলের PNG ফাইল ডিস্কে নেই।',
-  'Turns on when all panels are generated.': 'সব প্যানেল জেনারেট হলে চালু হবে।',
   // The downloads box at the bottom right (downloads.js, 2026-11-24). The toast and the clear button are the
   // owner's own words; the rest follows the drawings the owner approved.
   'Downloads': 'ডাউনলোড',
   'Download started. At 100% the file is saved on your computer.': 'ডাউনলোড শুরু হয়েছে। 100% হলে ফাইলটি আপনার কম্পিউটারে সেভ হবে।',
-  'Clear the downloaded ones': 'অলরেডি ডাউনলোডেডগুলো সরান',
+  'Remove the bottom tray': 'নিচের ট্রেটা সরান',
   'Download again': 'আবার ডাউনলোড',
   'This download is already in the box at the bottom right.': 'এই ডাউনলোডটি নিচের ডান পাশের বক্সে আগে থেকেই আছে।',
   'Waiting: it starts when the one before it is done': 'অপেক্ষায় আছে: আগেরটি শেষ হলে শুরু হবে',

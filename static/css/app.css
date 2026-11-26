@@ -296,13 +296,13 @@ a { color: var(--accent-text); }
   border: 0; background: var(--accent) center / 12px no-repeat
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
-/* /customerep (the client demo page): no History tab and no model status. */
-[data-app="customer"] #tab-history, [data-app="customer"] #provider-status,
-[data-app="experiment"] #tab-history, [data-app="experiment"] #provider-status { display: none; }
-/* The History tab is a client page's alone since 2026-11-25 (/client_<name>: the jobs that client made); the head
-   admin's History is a tab of the Supreme dashboard. */
+/* /customerep (the client demo page) and /experiment: no model status. */
+[data-app="customer"] #provider-status, [data-app="experiment"] #provider-status { display: none; }
+/* The History tab: on a client page (/client_<name>: the jobs that client made) and, since 2026-11-26, on the demo
+   page /customerep (the demo login's jobs); both are marked data-app="customer". Not on the main page (the head
+   admin's History is a tab of the Supreme dashboard since 2026-11-25), /panels or /experiment. */
 #tab-history { display: none; }
-[data-client] #tab-history { display: inline-flex; }
+[data-app="customer"] #tab-history { display: inline-flex; }
 /* /panels (the studio's panel page): no History tab; the model status stays. */
 [data-app="panels"] #tab-history { display: none; }
 /* The dashboard is only on the studio page. */
@@ -1182,6 +1182,10 @@ a.token-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .downloads-mark[hidden] { display: none; }
 .downloads-actions { display: inline-flex; flex: none; align-items: center; gap: 4px; }
 .downloads-item.is-failed .downloads-status { color: var(--danger); }
+/* the tray's own button ("Remove the bottom tray"): a cross and a slightly red border (the owner, 2026-11-26) */
+.downloads-clear { border-color: var(--danger-border); }
+.downloads-clear .icon { color: var(--danger); }
+.downloads-clear:hover { background: var(--danger-soft); border-color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { .downloads-fill { transition: none; } }
 
 /* ---------- The jobs box (jobsbox.js, 2026-11-24): a job still being made after it left the Result area. It looks

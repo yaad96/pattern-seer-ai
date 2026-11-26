@@ -1439,16 +1439,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session_id: str | None = None,
             clients: bool = False,
             client: str = Query("", max_length=32),
+            demo: bool = False,
         ) -> list[JobSummary]:
             """History's cards, newest first. The head admin gets every job (`clients`: only those the Partner
-            dashboard lists: made with a client login or with the demo login); a client login only the jobs it made,
-            and the partner the clients' and the demo login's jobs, both without costs (the client also without the
-            model); the demo login none. Each job made with a client login says the tokens it cost."""
+            dashboard lists: made with a client login or with the demo login; `demo`: only the demo login's, as the
+            demo page's History lists them); a client login only the jobs it made, and since 2026-11-26 the demo
+            login only the jobs made with the demo login (the owner: "treat Demo as any other customer. So all the
+            features of a customer, except token-based usage should be there"); the partner the clients' and the demo
+            login's jobs. None of the three gets costs, and the client and the demo login no model either. Each job
+            made with a client login says the tokens it cost."""
             own = client_login(request)
-            if is_demo(request):
-                raise limited_refusal(request)
-            # `client`: one client's jobs (the head admin on that client's page); a client login always gets its own
-            match = ((lambda j: j.client == own) if own else (lambda j: j.client == client) if client
+            mine = is_demo(request)
+            # a client login always gets its own jobs, the demo login always the demo login's; `client`: one client's
+            # jobs (the head admin on that client's page); `demo`: the demo login's (the head admin on the demo page)
+            match = ((lambda j: j.client == own) if own else (lambda j: j.demo) if mine or demo
+                     else (lambda j: j.client == client) if client
                      else partner_sees if is_partner(request) or clients else None)
             names = client_names()
             out = []
@@ -1457,7 +1462,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 update = {"tokens": extra["tokens"], "client_name": extra["client_name"]}
                 if is_limited(request):
                     update.update(cost_usd=None, uncosted_calls=0, cost_partial=False)
-                if own:  # the client itself: no model names either, as on the rest of its page
+                if own or mine:  # the client itself, or the demo login: no model names either, as on the rest of its page
                     update.update(provider=None, model=None, client_name=None)
                 out.append(_summary(job).model_copy(update=update))
             return out

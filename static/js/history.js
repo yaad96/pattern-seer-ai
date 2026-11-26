@@ -134,7 +134,9 @@ function optionRows(options, forClient) {
   });
 }
 
-export function initHistory(root, { onContinue, onDeleted, scope = 'studio', client = '' } = {}) {
+/** scope: 'studio' (the Supreme dashboard: everything), 'customer' (a page's own History: a client's jobs, or, with
+ * `demo`, the demo login's on the demo page) or 'partner' (the Partner dashboard). */
+export function initHistory(root, { onContinue, onDeleted, scope = 'studio', client = '', demo = false } = {}) {
   const state = { kind: '', limit: PAGE, items: [], loaded: false, seq: 0 };
   const studio = scope === 'studio';
   const forClient = scope === 'customer';
@@ -173,7 +175,7 @@ export function initHistory(root, { onContinue, onDeleted, scope = 'studio', cli
     try {
       // the Partner dashboard lists the clients' jobs, whoever looks at it (the head admin opens it too)
       // and a client page lists that client's (the head admin opens a client's page too)
-      const items = await api.listJobs({ limit: state.limit, kind: state.kind || undefined, clients: scope === 'partner', client });
+      const items = await api.listJobs({ limit: state.limit, kind: state.kind || undefined, clients: scope === 'partner', client, demo });
       if (mine !== state.seq) return;
       state.items = items;
       state.loaded = true;

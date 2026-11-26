@@ -128,22 +128,25 @@ function paint(it) {
 function render() {
   ensureBox();
   box.hidden = !items.length;
-  const finished = items.some((it) => it.state === 'ready');
+  // a download that has ended (ready, or failed) can be taken away; one being made or waiting stays, and the tray with it
+  const ended = (it) => it.state === 'ready' || it.state === 'failed';
+  const finished = items.some(ended);
   const shown = `${items.length}|${finished}`;
   if (shown !== headShown) {
     headShown = shown;
     replace(head, icon('download'), h('span', { class: 'downloads-title' }, 'Downloads'),
       h('span', { class: 'badge' }, String(items.length)), h('span', { class: 'spacer' }),
+      // the owner's words (2026-11-26): "nicher tray ta shoran", with a cross and a slightly red border
       finished ? h('button', {
-        type: 'button', class: 'btn btn-sm',
+        type: 'button', class: 'btn btn-sm downloads-clear',
         onClick: () => {
-          for (const it of items.filter((x) => x.state === 'ready')) {
+          for (const it of items.filter(ended)) {
             items.splice(items.indexOf(it), 1);
             it.el.remove();
           }
           render();
         },
-      }, 'Clear the downloaded ones') : null);
+      }, icon('x'), 'Remove the bottom tray') : null);
   }
   for (const it of items) paint(it);
   place();

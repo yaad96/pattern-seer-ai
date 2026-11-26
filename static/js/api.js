@@ -310,13 +310,14 @@ export const api = {
   },
 
   /** GET /api/jobs -> JobSummary[] (newest first). */
-  listJobs({ limit, kind, sessionId, clients, client } = {}) {
+  listJobs({ limit, kind, sessionId, clients, client, demo } = {}) {
     const q = new URLSearchParams();
     if (limit) q.set('limit', String(limit));
     if (kind) q.set('kind', kind);
     if (sessionId) q.set('session_id', sessionId);
     if (clients) q.set('clients', '1'); // only the jobs the Partner dashboard's History lists: the clients' and the demo login's
     if (client) q.set('client', client); // only that client's (a client page's History)
+    if (demo) q.set('demo', '1'); // only the demo login's (the demo page's History, as the head admin sees it there)
     const qs = q.toString();
     return request('GET', `${JOBS_API}${qs ? `?${qs}` : ''}`);
   },

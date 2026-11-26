@@ -20,8 +20,9 @@ const TABS = ['recreate', 'design'];
 // the header here; it was this page's fourth tab, #dashboard, which still leads there. Since 2026-11-25 the head
 // admin's History is a tab of that dashboard too (the owner: "in supreme dashboard, move the history inside it"):
 // #history here leads there, with ?job=<id> to that job's view.
-// /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only) and
-// Design, without the History tab, the model status, the output settings, costs or prompts.
+// /customerep, the page for showing clients a demo (the server marks it): Recreate (production panels only), Design
+// and, since 2026-11-26, its own History (the jobs made with the demo login), like a client's page without the
+// tokens; without the model status, the output settings, costs or prompts.
 // /experiment is a copy of it (studio login only) for trying other image models, with its own saved state.
 // /panels (studio login only, 2026-11-07): the studio's production panels, which the studio page links to. It is the
 // /customerep flow with the studio's details (output settings, View prompt, costs, image details), the back mirrored
@@ -187,11 +188,16 @@ async function boot() {
       let tabs = null;
       let recreate = null;
       let historyTab = null;
-      // a job still being made after it left the Result area (jobsbox.js): a client page opens it in its History;
-      // /customerep and /experiment have no History, so there it is shown in the Result area again
+      // The demo page /customerep is treated like a client's page, without the tokens (the owner, 2026-11-26: "treat
+      // Demo as any other customer. So all the features of a customer, except token-based usage should be there"):
+      // it has its own History too, of the jobs made with the demo login. /experiment has none.
+      const DEMO_PAGE = MODE === 'customer' && !CLIENT;
+      const OWN_HISTORY = Boolean(CLIENT) || DEMO_PAGE;
+      // a job still being made after it left the Result area (jobsbox.js): a page with its own History opens it
+      // there; /experiment has none, so there it is shown in the Result area again
       const jobsBox = initJobsBox({
         key: `${KEY}.bgJobs`,
-        history: Boolean(CLIENT),
+        history: OWN_HISTORY,
         stageText: withoutModel,
         openJob: (jobId) => {
           if (historyTab) {
@@ -210,11 +216,13 @@ async function boot() {
       recreate = initRecreate(document.getElementById('panel-recreate'), { customer: true, keyPrefix: KEY, client: CLIENT, jobsBox });
       const design = initDesign(document.getElementById('panel-design'), { customer: true, keyPrefix: KEY, client: CLIENT });
       // a client page also has its own History (history.js, the jobs that client made; since 2026-11-24) and its
-      // "Customer dashboard" (customerboard.js); /customerep and /experiment have neither
+      // "Customer dashboard" (customerboard.js, the tokens); the demo page has the History (the demo login's jobs)
+      // and no tokens; /experiment has neither
       const board = CLIENT ? initCustomerBoard(document.getElementById('panel-tokens'), { client: CLIENT }) : null;
-      historyTab = CLIENT ? initHistory(document.getElementById('panel-history'), {
+      historyTab = OWN_HISTORY ? initHistory(document.getElementById('panel-history'), {
         scope: 'customer',
         client: CLIENT,
+        demo: DEMO_PAGE,
         onContinue: (job) => {
           tabs.select('design', false);
           design.continueFrom(job);
@@ -226,7 +234,9 @@ async function boot() {
           else board.deactivate();
           if (name === 'history') historyTab.activate();
         }, ['recreate', 'design', 'history', 'tokens'])
-        : initTabs(() => {}, ['recreate', 'design']);
+        : historyTab
+          ? initTabs((name) => { if (name === 'history') historyTab.activate(); }, ['recreate', 'design', 'history'])
+          : initTabs(() => {}, ['recreate', 'design']);
       wireGlobalInput(tabs, recreate, design);
       bootEl.remove();
     } catch (err) {

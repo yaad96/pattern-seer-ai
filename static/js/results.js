@@ -108,14 +108,13 @@ function createPanelZips(jobId, combined, customer) {
       customer ? 'Every panel at its 3XL print size at 300 dpi (big files).'
         : 'Print size: every panel at its 3XL print size at 300 dpi (big files). Original size: the images exactly as the AI made them.'),
   ];
-  const hint = h('span', { class: 'hint' }, 'Turns on when all panels are generated.');
+  // the two buttons are off until every panel is made; no line of text says so (removed at the owner's word, 2026-11-26)
   return {
-    el: h('div', { class: 'panel-zips' }, menus.map((m) => m.el), hint),
+    el: h('div', { class: 'panel-zips' }, menus.map((m) => m.el)),
     update(job) {
       const panels = job.variants.filter((v) => v.panel);
       const ready = panels.length > 0 && panels.every((v) => v.status === 'succeeded');
       for (const m of menus) m.setReady(ready);
-      hint.hidden = ready;
     },
   };
 }
