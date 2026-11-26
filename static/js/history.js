@@ -203,7 +203,9 @@ export function initHistory(root, { onContinue, onDeleted, scope = 'studio', cli
           h('span', { class: 'badge badge-accent' }, KIND_LABEL[s.kind] || s.kind),
           h('span', { title: fmtDateTime(s.created_at) }, fmtRelative(s.created_at))),
         h('span', { class: 'job-card-title' }, title),
-        s.client_name && !forClient ? h('span', { class: 'job-card-client', 'data-no-translate': '' }, s.client_name) : null,
+        // whose job: the customer's name, or the demo login (never on a customer's own page)
+        s.client_name && !forClient ? h('span', { class: 'job-card-client', 'data-no-translate': '' }, s.client_name)
+          : s.demo && !forClient ? h('span', { class: 'job-card-client' }, 'Demo login') : null,
         h('span', { class: 'job-card-meta' }, dotSeparated(meta.filter(Boolean)))));
   }
 
@@ -216,7 +218,7 @@ export function initHistory(root, { onContinue, onDeleted, scope = 'studio', cli
         h('p', { class: 'empty-title' }, 'Nothing here yet'),
         h('p', { class: 'empty-text' }, state.kind
           ? `No ${KIND_LABEL[state.kind].toLowerCase()} jobs yet.`
-          : scope === 'partner' ? 'Every job your clients make is listed here.'
+          : scope === 'partner' ? 'Every job your clients and the demo login make is listed here.'
             : 'Everything you make in Recreate and Design is listed here.')));
       clear(more);
       return;
@@ -283,7 +285,8 @@ export function initHistory(root, { onContinue, onDeleted, scope = 'studio', cli
     replace(sub,
       h('span', { class: 'badge badge-accent' }, KIND_LABEL[job.kind] || job.kind),
       badge,
-      job.client_name && !forClient ? h('span', { class: 'badge', 'data-no-translate': '' }, job.client_name) : null,
+      job.client_name && !forClient ? h('span', { class: 'badge', 'data-no-translate': '' }, job.client_name)
+        : job.demo && !forClient ? h('span', { class: 'badge' }, 'Demo login') : null,
       h('span', null, fmtDateTime(job.created_at)),
       cost,
       tokens,

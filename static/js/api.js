@@ -225,7 +225,8 @@ export const api = {
       { json: { tokens, note, taka, request_id: requestId } });
   },
 
-  /** GET /api/tokens/jobs?days=&client= (head admin, partner) -> {jobs: [...every client's jobs with their tokens]}. */
+  /** GET /api/tokens/jobs?days=&client= (head admin, partner) -> {jobs: [...every client's jobs with their tokens,
+   * and the demo login's (no tokens)]}; client "_demo": only the demo login's. */
   tokenJobs(days, client) {
     const q = new URLSearchParams({ days: String(days) });
     if (client) q.set('client', client);
@@ -314,7 +315,7 @@ export const api = {
     if (limit) q.set('limit', String(limit));
     if (kind) q.set('kind', kind);
     if (sessionId) q.set('session_id', sessionId);
-    if (clients) q.set('clients', '1'); // only the jobs made with a client login (the Partner dashboard's History)
+    if (clients) q.set('clients', '1'); // only the jobs the Partner dashboard's History lists: the clients' and the demo login's
     if (client) q.set('client', client); // only that client's (a client page's History)
     const qs = q.toString();
     return request('GET', `${JOBS_API}${qs ? `?${qs}` : ''}`);

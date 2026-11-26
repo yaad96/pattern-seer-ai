@@ -22,6 +22,7 @@ import { callout, closeDialog, confirmDialog, copyText, field, inputEl, loadingR
 const HASH_CLIENT = /^#client=([a-z0-9]{1,32})$/;
 const RANGES = [['0', 'All time'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']];
 const MINUS = '−';
+const DEMO_JOBS = '_demo'; // the Jobs tab's filter value for the demo login's jobs (the server's name for it)
 const WHO = { studio: 'Head admin', partner: 'Partner' };
 const REASONS = [['not_found', 'TrxID not found in bKash'], ['amount', 'The amount does not match'],
   ['used', 'This TrxID was used before']];
@@ -869,14 +870,15 @@ export function startBoard(options) {
         { note: 'For every client. A bKash payment’s tokens are in the list above.', bodyClass: 'dash-scroll' }));
   }
 
-  /* ---------- Jobs: every client's jobs, day by day (tokens only) ---------- */
+  /* ---------- Jobs: every client's jobs and the demo login's, day by day (tokens only) ---------- */
   function renderJobs() {
     const range = segmented({
       legend: 'Period', value: prefs.jobsRange, options: RANGES.map(([value, label]) => ({ value, label })),
       onChange: (v) => { prefs.jobsRange = v; savePrefs(); load(); },
     });
-    const picker = h('select', { class: 'select', 'aria-label': 'Client' }, h('option', { value: '' }, 'All clients'),
-      overview.clients.map((c) => h('option', { value: c.slug }, c.name)));
+    const picker = h('select', { class: 'select', 'aria-label': 'Client' }, h('option', { value: '' }, 'Everyone'),
+      overview.clients.map((c) => h('option', { value: c.slug }, c.name)),
+      h('option', { value: DEMO_JOBS }, 'Demo login')); // its jobs are listed too (no tokens)
     picker.value = prefs.jobsClient;
     if (picker.value !== prefs.jobsClient) prefs.jobsClient = ''; // a client that is gone
     picker.addEventListener('change', () => { prefs.jobsClient = picker.value; savePrefs(); load(); });
@@ -895,12 +897,12 @@ export function startBoard(options) {
     replace(panel, offNote(),
       h('div', { class: 'dash-filters' }, range.el,
         h('label', { class: 'dash-type' }, h('span', { class: 'field-label' }, 'Client'), picker),
-        h('p', { class: 'hint board-filter-note' }, 'Every job your clients made, newest first, with the tokens each part cost.')),
+        h('p', { class: 'hint board-filter-note' }, 'Every job your clients made, newest first, with the tokens each part cost; and the demo login’s jobs, which cost no tokens.')),
       !jobs ? loadingRow('Loading…') : dayCards.length ? h('div', { class: 'dash-days' }, dayCards)
         : h('div', { class: 'empty' },
           h('div', { class: 'empty-icon' }, icon('chart')),
           h('p', { class: 'empty-title' }, 'No jobs in this period'),
-          h('p', { class: 'empty-text' }, 'Jobs your clients make appear here with the tokens each one used.')));
+          h('p', { class: 'empty-text' }, 'Jobs your clients and the demo login make appear here, with the tokens each one used.')));
   }
 
   load();

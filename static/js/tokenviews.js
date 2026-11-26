@@ -75,7 +75,7 @@ function chatRows(group, openChats, client, onOpen) {
     h('td', { class: 'nowrap' }, fmtDateTime(first.created_at),
       fmtDateTime(last.created_at) !== fmtDateTime(first.created_at)
         ? h('div', { class: 'dash-sub' }, `to ${fmtDateTime(last.created_at)}`) : null),
-    client ? h('td', { 'data-no-translate': '' }, first.client_name || first.client || '') : null,
+    client ? h('td', { 'data-no-translate': '' }, whose(first)) : null,
     h('td', null, picture(shown)),
     h('td', null,
       // the AI designer's title stays as written; without one, the plain name (in Bangla on a client's page)
@@ -83,8 +83,8 @@ function chatRows(group, openChats, client, onOpen) {
       h('div', { class: 'cb-parts' },
         h('span', { class: 'cb-part' }, h('span', null, `${fmtInt(msgs.length)} design ${msgs.length === 1 ? 'message' : 'messages'}`)),
         failed ? h('span', { class: ['cb-part', 'is-failed'] }, h('span', null, `${fmtInt(failed)} failed, not charged`)) : null)),
-    h('td', { class: 'num' }, h('strong', null, fmtInt(tokens)),
-      running ? h('div', { class: 'dash-sub' }, 'More when the running one finishes') : null),
+    h('td', { class: 'num' }, charged(first, tokens),
+      running && !first.demo ? h('div', { class: 'dash-sub' }, 'More when the running one finishes') : null),
     h('td', null, statusBadge(chatStatus(msgs.map((j) => j.status)))),
     h('td', { class: 'nowrap' }, toggle));
   const detail = h('tr', { class: 'dash-calls', hidden: !open }, h('td', { colspan: client ? '7' : '6' }, open ? messagesTable(msgs, onOpen) : null));
@@ -101,6 +101,12 @@ function chatRows(group, openChats, client, onOpen) {
   return h('tbody', null, main, detail);
 }
 
+/** Whose job a row is, in the dashboards' Jobs tab: the client's name, or the demo login (a badge: it is no client). */
+const whose = (job) => (job.demo ? h('span', { class: 'badge' }, 'Demo login') : job.client_name || job.client || '');
+
+/** What a finished job cost: its tokens; the demo login's jobs are never charged. */
+const charged = (job, tokens) => (job.demo ? h('span', { class: 'muted' }, 'Not charged') : h('strong', null, fmtInt(tokens)));
+
 /** onOpen(jobId): a row opens that job (a dashboard with a History: the whole view of the job). */
 const opens = (tr, job, onOpen) => (onOpen && !job.deleted ? rowOpens(tr, () => onOpen(job.id), 'Open this job in History') : tr);
 
@@ -116,7 +122,7 @@ function messagesTable(msgs, onOpen) {
         job.message ? h('div', { class: 'dash-msg', 'data-no-translate': '' }, job.message) : null,
         job.reply ? h('div', { class: 'dash-reply' }, h('span', null, 'Designer: '),
           h('span', { 'data-no-translate': '' }, job.reply)) : null),
-      h('td', { class: 'num' }, job.running ? h('span', { class: 'muted' }, 'Charged when it finishes')
+      h('td', { class: 'num' }, job.demo ? charged(job, 0) : job.running ? h('span', { class: 'muted' }, 'Charged when it finishes')
         : job.failed.length ? part('design', 0, true) : h('strong', null, fmtInt(job.tokens))),
       h('td', null, statusBadge(job.status))), job, onOpen))));
 }
@@ -130,10 +136,10 @@ function jobRow(job, ids, client, onOpen) {
       ...job.failed.map((item) => part(item, 0, true))];
   return opens(h('tr', null,
     h('td', { class: 'nowrap' }, fmtDateTime(job.created_at), ids ? h('div', { class: 'dash-id', 'data-no-translate': '' }, job.id) : null),
-    client ? h('td', { 'data-no-translate': '' }, job.client_name || job.client || '') : null,
+    client ? h('td', { 'data-no-translate': '' }, whose(job)) : null,
     h('td', null, thumb),
     h('td', null, h('div', { class: 'cb-parts' }, parts.length ? parts : h('span', { class: 'muted' }, '–'))),
-    h('td', { class: 'num' }, job.running ? h('span', { class: 'muted' }, 'Charged when it finishes') : h('strong', null, fmtInt(job.tokens))),
+    h('td', { class: 'num' }, job.demo ? charged(job, 0) : job.running ? h('span', { class: 'muted' }, 'Charged when it finishes') : h('strong', null, fmtInt(job.tokens))),
     h('td', null, job.deleted ? h('span', { class: 'badge badge-danger' }, 'Deleted') : statusBadge(job.status)),
     h('td', null)), job, onOpen);
 }

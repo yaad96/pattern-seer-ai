@@ -170,6 +170,7 @@ class JobSummary(BaseModel):
     uncosted_calls: int
     cost_partial: bool  # an older job with some calls recorded since (e.g. a retry)
     client: str | None = None  # the client page whose own login made it
+    demo: bool = False  # made with the demo login
     client_name: str | None = None  # that client's name (not sent to the client itself)
     tokens: int | None = None  # our tokens it cost its client (None: no client login made it)
 
@@ -193,6 +194,7 @@ def _summary(job: Job) -> JobSummary:
         uncosted_calls=job.uncosted_calls,
         cost_partial=job.cost_partial,
         client=job.client,
+        demo=job.demo,
     )
 
 
@@ -222,8 +224,9 @@ button{width:100%;margin-top:22px;padding:11px;border:0;border-radius:8px;backgr
 </body></html>"""
 
 
-# What the partner login is not shown of the clients' jobs (its History tab, 2026-11-24; the owner: "without the real
-# api cost, prompt and 'api call' expander"): the API costs and call counts, and every prompt.
+# What the partner login is not shown of the jobs it sees: the clients' and, since 2026-11-26, the demo login's (its
+# History tab, 2026-11-24; the owner: "without the real api cost, prompt and 'api call' expander"): the API costs and
+# call counts, and every prompt.
 PARTNER_HIDDEN: dict = {
     **dict.fromkeys(("prompt", "brief_prompt", "cost_usd", "uncosted_calls", "cost_partial", "api_calls",
                      "calls_in_flight"), True),
@@ -238,6 +241,12 @@ DEMO_HIDDEN: dict = {
     ), True),
     "variants": {"__all__": {"prompt", "model_text", "cost_usd", "uncosted_calls", "api_calls"}},
 }
+
+
+# The dashboards' Jobs tab: the filter value for "only the demo login's jobs" (no client's link name can be this:
+# those are letters and digits only), and what such a job's Client column says.
+DEMO_JOBS = "_demo"
+DEMO_NAME = "Demo login"
 
 
 def is_demo(request: Request) -> bool:
@@ -256,22 +265,29 @@ def is_partner(request: Request) -> bool:
     return request.scope.get("jhs_role") == "partner"
 
 
+def partner_sees(job: Job) -> bool:
+    """The jobs the Partner dashboard lists and may open: those made with a client login and, since 2026-11-26, those
+    made with the demo login (the owner: "does partner dashboard now show demo login jobs in jobs or history? IT
+    should."). Not the head admin's own."""
+    return job.client is not None or job.demo
+
+
 def is_limited(request: Request) -> bool:
     """Any login but the studio's: the demo login and the client logins get the demo page's limits (production
     panels and designs only, the default model at 2K, only the jobs they made, no costs, models or prompts); the
-    partner login sees only client jobs."""
+    partner login sees only the clients' and the demo login's jobs."""
     return is_demo(request) or is_partner(request) or client_login(request) is not None
 
 
 def made_by(request: Request, job: Job | None) -> bool:
     """Whether the login making the request may use `job`: the studio login every job, the demo login its own jobs,
-    a client login its own jobs, the partner login the clients' jobs (their previews only; see the files route)."""
+    a client login its own jobs, the partner login the clients' and the demo login's jobs."""
     if job is None:
         return False
     if is_demo(request):
         return job.demo
     if is_partner(request):
-        return job.client is not None
+        return partner_sees(job)
     client = client_login(request)
     return client is None or job.client == client
 
@@ -794,6 +810,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "login_enabled": bool(settings.app_password),  # the page's Log out button
                 "prices": book.prices.as_dict() if book.enabled else None, "clients": rows}
 
+    def job_row(job: Job, items: list[dict]) -> dict:
+        """A job as the dashboards' token tables list it; `items`: the ledger's charges for it in the period."""
+        paid_for = set(job.charge_variants)
+        return {
+            "id": job.id, "created_at": job.created_at, "kind": job.kind.value, "status": job.status.value,
+            # a Design message: its chat (the dashboard nests a chat's messages) and its words
+            "chat": job.session_id if job.kind == JobKind.DESIGN else None, **usage.design_texts(job),
+            "refine": job.parent is not None,  # a change request in its chat
+            "panels": (job.options or {}).get("panels"), "back": (job.options or {}).get("back"),
+            "preview": next((v.preview for v in job.variants if v.status == "succeeded" and v.preview), None),
+            "deleted": False, "tokens": sum(-e["tokens"] for e in items),
+            "items": [{"item": e.get("item"), "tokens": -e["tokens"]} for e in items],
+            "failed": [item_of(job, v) or "image" for v in job.variants if v.status == "failed"],
+            # images that came out without costing a client: made again by the studio, with tokens off, or by the
+            # demo login (whose jobs are never charged)
+            "waived": [item_of(job, v) or "image" for v in job.variants
+                       if v.status == "succeeded" and v.index not in paid_for],
+            "running": job.status in (JobStatus.QUEUED, JobStatus.RUNNING),
+        }
+
+    async def demo_rows(since: str) -> list[dict]:
+        """The demo login's jobs made since `since` ("" = all), as the dashboards' Jobs tab lists them (2026-11-26):
+        no client and no tokens (the demo login is never charged)."""
+        def load() -> list[Job]:
+            out = []
+            for job_id in store.list_ids():
+                job = store.load(job_id)
+                if job is not None and job.demo and not job.client and (not since or job.created_at >= since):
+                    out.append(job)
+            return out
+
+        return [{**job_row(job, []), "client": None, "client_name": DEMO_NAME, "demo": True}
+                for job in await asyncio.to_thread(load)]
+
     async def client_rows(slug: str, since: str) -> tuple[list[dict], list[dict]]:
         """A client's jobs made or charged since `since` ("" = all), newest first, each with the tokens its images cost
         in that time (a failed image costs nothing; one the studio made again, or one made with tokens off, is free;
@@ -833,25 +883,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 gone.append(job_id)
             else:
                 jobs.append(job)
-        rows = []
-        for job in jobs:
-            items = charges.get(job.id, [])
-            paid_for = set(job.charge_variants)
-            rows.append({
-                "id": job.id, "created_at": job.created_at, "kind": job.kind.value, "status": job.status.value,
-                # a Design message: its chat (the dashboard nests a chat's messages) and its words
-                "chat": job.session_id if job.kind == JobKind.DESIGN else None, **usage.design_texts(job),
-                "refine": job.parent is not None,  # a change request in its chat
-                "panels": (job.options or {}).get("panels"), "back": (job.options or {}).get("back"),
-                "preview": next((v.preview for v in job.variants if v.status == "succeeded" and v.preview), None),
-                "deleted": False, "tokens": sum(-e["tokens"] for e in items),
-                "items": [{"item": e.get("item"), "tokens": -e["tokens"]} for e in items],
-                "failed": [item_of(job, v) or "image" for v in job.variants if v.status == "failed"],
-                # images that came out without costing the client: made again by the studio, or with tokens off
-                "waived": [item_of(job, v) or "image" for v in job.variants
-                           if v.status == "succeeded" and v.index not in paid_for],
-                "running": job.status in (JobStatus.QUEUED, JobStatus.RUNNING),
-            })
+        rows = [job_row(job, charges.get(job.id, [])) for job in jobs]
         for job_id in gone:  # charged jobs deleted from History since
             items = charges[job_id]
             rows.append({"id": job_id, "created_at": items[0].get("at"), "kind": None, "status": None, "panels": None,
@@ -1067,16 +1099,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/tokens/jobs")
     async def token_jobs(request: Request, days: int = Query(7, ge=0, le=3650), client: str = "") -> dict:
         """The two dashboards' Jobs tab: every client's jobs in the last `days` days (0 = all) with the tokens each
-        part cost, newest first. Tokens only: no API costs, models or prompts (head admin and partner)."""
+        part cost, and the demo login's jobs (no tokens; `client=_demo`: only those), newest first. Tokens only: no
+        API costs, models or prompts (head admin and partner)."""
         studio_or_partner(request)
         names = client_names()
-        if client and client not in names:
+        if client and client != DEMO_JOBS and client not in names:
             raise HTTPException(404, "No such client.")
         since = since_of(days)
         rows: list[dict] = []
-        for slug in ([client] if client else list(names)):
+        for slug in ([] if client == DEMO_JOBS else [client] if client else list(names)):
             mine, _ = await client_rows(slug, since)
             rows += [{**row, "client": slug, "client_name": names[slug]} for row in mine]
+        if client in ("", DEMO_JOBS):
+            rows += await demo_rows(since)
         rows.sort(key=lambda r: r["id"], reverse=True)
         return {"days": days, "jobs": rows, "clients": [{"slug": slug, "name": name} for slug, name in names.items()]}
 
@@ -1405,16 +1440,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             clients: bool = False,
             client: str = Query("", max_length=32),
         ) -> list[JobSummary]:
-            """History's cards, newest first. The head admin gets every job (`clients`: only those made with a client
-            login, as the Partner dashboard lists them); a client login only the jobs it made, and the partner only
-            the jobs made with a client login, both without costs (the client also without the model); the demo login
-            none. Each job made with a client login says the tokens it cost."""
+            """History's cards, newest first. The head admin gets every job (`clients`: only those the Partner
+            dashboard lists: made with a client login or with the demo login); a client login only the jobs it made,
+            and the partner the clients' and the demo login's jobs, both without costs (the client also without the
+            model); the demo login none. Each job made with a client login says the tokens it cost."""
             own = client_login(request)
             if is_demo(request):
                 raise limited_refusal(request)
             # `client`: one client's jobs (the head admin on that client's page); a client login always gets its own
             match = ((lambda j: j.client == own) if own else (lambda j: j.client == client) if client
-                     else (lambda j: j.client is not None) if is_partner(request) or clients else None)
+                     else partner_sees if is_partner(request) or clients else None)
             names = client_names()
             out = []
             for job in mgr.list(limit=limit, kind=kind, session_id=session_id, match=match):
